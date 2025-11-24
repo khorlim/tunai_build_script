@@ -150,15 +150,6 @@ Future<void> performUpload() async {
     }
     print('Found IPA file: $ipaFilePath');
 
-    // 4. Ensure package dependencies are installed
-    print('Ensuring package dependencies are installed...');
-    final pubGetExitCode = await runCommandInPackageDir('dart', ['pub', 'get']);
-    if (pubGetExitCode != 0) {
-      throw Exception(
-        'dart pub get in package directory failed with exit code $pubGetExitCode',
-      );
-    }
-
     // 5. Run the flutter_app_host upload command
     // Note: flutter_app_host command should run from package directory
     final uploadExitCode = await runCommandInPackageDir('dart', [
