@@ -5,12 +5,12 @@ import 'package:flutter_app_host/flutter_app_host.dart' as host;
 
 String? _appDir;
 String? _packageDir;
+String? _platform;
 
 void main(List<String> arguments) async {
   // Get the package directory (parent of bin directory)
   final scriptPath = Platform.script.toFilePath();
   _packageDir = p.dirname(p.dirname(scriptPath));
-  print('Package directory: $_packageDir');
   try {
     // Parse app directory from arguments
     _appDir = _parseAppDir(arguments);
@@ -28,6 +28,19 @@ void main(List<String> arguments) async {
       _appDir = Directory.current.path;
       print('Using current directory as app directory');
     }
+
+    // Parse platform from arguments or auto-detect
+    _platform = _parsePlatform(arguments);
+    if (_platform == null) {
+      _platform = await _detectPlatform();
+    }
+    if (_platform == null) {
+      print(
+        'Error: Could not determine platform. Please specify --platform ios or --platform android',
+      );
+      exit(1);
+    }
+    print('Using platform: $_platform');
 
     if (arguments.contains('--upload')) {
       // Perform only upload if '--upload' is passed
@@ -56,13 +69,49 @@ String? _parseAppDir(List<String> arguments) {
   return null;
 }
 
+String? _parsePlatform(List<String> arguments) {
+  final platformIndex = arguments.indexOf('--platform');
+  if (platformIndex != -1 && platformIndex + 1 < arguments.length) {
+    final platform = arguments[platformIndex + 1].toLowerCase();
+    if (platform == 'ios' || platform == 'android') {
+      return platform;
+    } else {
+      print(
+        'Warning: Invalid platform "$platform". Must be "ios" or "android"',
+      );
+      return null;
+    }
+  }
+  return null;
+}
+
+Future<String?> _detectPlatform() async {
+  // Check if iOS directory exists
+  final iosDir = Directory(_getAppPath('ios'));
+  final androidDir = Directory(_getAppPath('android'));
+
+  final iosExists = await iosDir.exists();
+  final androidExists = await androidDir.exists();
+
+  if (iosExists && androidExists) {
+    // Both exist, can't auto-detect
+    return null;
+  } else if (iosExists) {
+    return 'ios';
+  } else if (androidExists) {
+    return 'android';
+  }
+
+  return null;
+}
+
 String _getAppPath(String relativePath) {
   return p.join(_appDir!, relativePath);
 }
 
 Future<void> performBuild({bool update = true}) async {
   try {
-    print('Starting the build process...');
+    print('Starting the build process for $_platform...');
 
     if (update) {
       final gitPullExitCode = await runCommandInAppDir('git', ['pull']);
@@ -91,24 +140,9 @@ Future<void> performBuild({bool update = true}) async {
       }
     }
 
-    // Check if ExportOptions.plist exists
-    final exportOptionsFile = File(_getAppPath('ios/ExportOptions.plist'));
-    final exportOptionsExists = await exportOptionsFile.exists();
-
-    final buildArgs = <String>['build', 'ipa'];
-    if (exportOptionsExists) {
-      final exportOptionsPath = _getAppPath('ios/ExportOptions.plist');
-      buildArgs.addAll(['--export-options-plist', exportOptionsPath]);
-      print('Using ExportOptions.plist for IPA export');
-    } else {
-      print(
-        'Warning: ios/ExportOptions.plist not found, building without export options',
-      );
-    }
-
-    final buildExitCode = await runCommandInAppDir('flutter', buildArgs);
+    final buildExitCode = await _buildForPlatform();
     if (buildExitCode != 0) {
-      throw Exception('flutter build ipa failed with exit code $buildExitCode');
+      throw Exception('flutter build failed with exit code $buildExitCode');
     }
 
     await performUpload();
@@ -120,9 +154,47 @@ Future<void> performBuild({bool update = true}) async {
   }
 }
 
+Future<int> _buildForPlatform() async {
+  if (_platform == 'ios') {
+    return await _buildIos();
+  } else if (_platform == 'android') {
+    return await _buildAndroid();
+  } else {
+    throw Exception('Unknown platform: $_platform');
+  }
+}
+
+Future<int> _buildIos() async {
+  // Check if ExportOptions.plist exists
+  final exportOptionsFile = File(_getAppPath('ios/ExportOptions.plist'));
+  final exportOptionsExists = await exportOptionsFile.exists();
+
+  final buildArgs = <String>['build', 'ipa'];
+  if (exportOptionsExists) {
+    final exportOptionsPath = _getAppPath('ios/ExportOptions.plist');
+    buildArgs.addAll(['--export-options-plist', exportOptionsPath]);
+    print('Using ExportOptions.plist for IPA export');
+  } else {
+    print(
+      'Warning: ios/ExportOptions.plist not found, building without export options',
+    );
+  }
+
+  return await runCommandInAppDir('flutter', buildArgs);
+}
+
+Future<int> _buildAndroid() async {
+  // Default to appbundle for Play Store, but check if user wants APK
+  // For now, we'll use appbundle as default (can be extended later with --apk flag)
+  final buildArgs = <String>['build', 'appbundle'];
+  print('Building Android App Bundle (AAB) for Play Store');
+
+  return await runCommandInAppDir('flutter', buildArgs);
+}
+
 Future<void> performUpload() async {
   try {
-    print('Starting the upload process...');
+    print('Starting the upload process for $_platform...');
 
     // 1. Get the version from pubspec.yaml
     final version = await getVersionFromPubspec();
@@ -132,29 +204,60 @@ Future<void> performUpload() async {
       exit(1);
     }
 
-    // 2. Get the iOS bundle identifier from .apphost
-    final iosBundleIdentifier = await getIosBundleIdentifierFromConfig();
-    if (iosBundleIdentifier == null) {
-      print('Error: Could not find iOS bundle identifier in .apphost');
-      print(
-        'Make sure .apphost file exists in the app directory with ios_bundle_identifier field',
-      );
-      exit(1);
+    final platform = _platform!; // Already validated in main()
+    String? bundleIdentifier;
+    String buildFilePath;
+
+    if (platform == 'ios') {
+      // 2. Get the iOS bundle identifier from .apphost
+      final iosBundleId = await getIosBundleIdentifierFromConfig();
+      if (iosBundleId == null) {
+        print('Error: Could not find iOS bundle identifier in .apphost');
+        print(
+          'Make sure .apphost file exists in the app directory with ios_bundle_identifier field',
+        );
+        exit(1);
+      }
+      bundleIdentifier = iosBundleId;
+
+      // 3. Find IPA file path dynamically
+      final ipaFile = await findIpaFile();
+      if (ipaFile == null) {
+        print('Error: Could not find IPA file in build/ios/ipa directory');
+        print('Make sure the build completed successfully');
+        exit(1);
+      }
+      buildFilePath = ipaFile;
+      print('Found IPA file: $buildFilePath');
+    } else if (platform == 'android') {
+      // 2. Get the Android package name from .apphost
+      // final androidPackageName = await getAndroidPackageNameFromConfig();
+      // if (androidPackageName == null) {
+      //   print('Error: Could not find Android package name in .apphost');
+      //   print(
+      //     'Make sure .apphost file exists in the app directory with android_package_name field',
+      //   );
+      //   exit(1);
+      // }
+      // bundleIdentifier = androidPackageName;
+
+      // 3. Find AAB or APK file path dynamically
+      final androidFile = await findAndroidBuildFile();
+      if (androidFile == null) {
+        print('Error: Could not find AAB or APK file in build directory');
+        print('Make sure the build completed successfully');
+        exit(1);
+      }
+      buildFilePath = androidFile;
+      print('Found Android build file: $buildFilePath');
+    } else {
+      throw Exception('Unknown platform: $platform');
     }
 
-    // 3. Find IPA file path dynamically
-    final ipaFilePath = await findIpaFile();
-    if (ipaFilePath == null) {
-      print('Error: Could not find IPA file in build/ios/ipa directory');
-      print('Make sure the build completed successfully');
-      exit(1);
-    }
-    print('Found IPA file: $ipaFilePath');
-
-    // 5. Run the flutter_app_host upload command
+    // 4. Run the flutter_app_host upload command
     // Note: flutter_app_host command should run from package directory
     try {
-      await host.do_upload('ios', ipaFilePath, version, iosBundleIdentifier);
+      await host.do_upload(platform, buildFilePath, version, bundleIdentifier);
     } catch (e) {
       throw Exception('flutter_app_host upload failed with error $e');
     }
@@ -238,6 +341,18 @@ Future<String?> getIosBundleIdentifierFromConfig() async {
   return config['ios_bundle_identifier'];
 }
 
+// Function to get the Android package name from the .apphost config file
+Future<String?> getAndroidPackageNameFromConfig() async {
+  final configFile = File(_getAppPath('.apphost'));
+  if (!await configFile.exists()) {
+    print('Error: Could not find .apphost config file in app directory');
+    return null;
+  }
+  final configContent = await configFile.readAsString();
+  final config = json.decode(configContent);
+  return config['android_package_name'];
+}
+
 // Function to find the IPA file in the build directory
 Future<String?> findIpaFile() async {
   final ipaDirectory = Directory(_getAppPath(p.join('build', 'ios', 'ipa')));
@@ -253,6 +368,50 @@ Future<String?> findIpaFile() async {
   for (final entry in entries) {
     if (entry is File && entry.path.endsWith('.ipa')) {
       return entry.path;
+    }
+  }
+
+  return null;
+}
+
+// Function to find Android build file (AAB or APK) in the build directory
+Future<String?> findAndroidBuildFile() async {
+  // First, try to find AAB file (preferred for Play Store)
+  final appbundleDirectory = Directory(
+    _getAppPath(p.join('build', 'app', 'outputs', 'bundle', 'release')),
+  );
+  if (await appbundleDirectory.exists()) {
+    final entries = appbundleDirectory.listSync();
+    for (final entry in entries) {
+      if (entry is File && entry.path.endsWith('.aab')) {
+        return entry.path;
+      }
+    }
+  }
+
+  // If no AAB found, try to find APK file
+  final apkDirectory = Directory(
+    _getAppPath(p.join('build', 'app', 'outputs', 'flutter-apk')),
+  );
+  if (await apkDirectory.exists()) {
+    final entries = apkDirectory.listSync();
+    for (final entry in entries) {
+      if (entry is File && entry.path.endsWith('.apk')) {
+        return entry.path;
+      }
+    }
+  }
+
+  // Also check the release APK directory
+  final releaseApkDirectory = Directory(
+    _getAppPath(p.join('build', 'app', 'outputs', 'apk', 'release')),
+  );
+  if (await releaseApkDirectory.exists()) {
+    final entries = releaseApkDirectory.listSync();
+    for (final entry in entries) {
+      if (entry is File && entry.path.endsWith('.apk')) {
+        return entry.path;
+      }
     }
   }
 
