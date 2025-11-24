@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:path/path.dart' as p;
+import 'package:flutter_app_host/flutter_app_host.dart' as host;
 
 String? _appDir;
 String? _packageDir;
@@ -152,20 +153,10 @@ Future<void> performUpload() async {
 
     // 5. Run the flutter_app_host upload command
     // Note: flutter_app_host command should run from package directory
-    final uploadExitCode = await runCommandInPackageDir('dart', [
-      'pub',
-      'run',
-      'flutter_app_host',
-      'ipa',
-      version,
-      ipaFilePath,
-      iosBundleIdentifier,
-    ]);
-
-    if (uploadExitCode != 0) {
-      throw Exception(
-        'flutter_app_host upload failed with exit code $uploadExitCode',
-      );
+    try {
+      await host.do_upload('ios', ipaFilePath, version, iosBundleIdentifier);
+    } catch (e) {
+      throw Exception('flutter_app_host upload failed with error $e');
     }
 
     print('Upload completed successfully!');
