@@ -136,18 +136,14 @@ Future<void> performUpload() async {
       exit(1);
     }
 
-    // 3. Define IPA file path
-    final ipaFilePath = _getAppPath(
-      p.join('build', 'ios', 'ipa', 'TunaiPro.ipa'),
-    );
-
-    // Check if IPA file exists
-    final ipaFile = File(ipaFilePath);
-    if (!await ipaFile.exists()) {
-      print('Error: IPA file not found at $ipaFilePath');
+    // 3. Find IPA file path dynamically
+    final ipaFilePath = await findIpaFile();
+    if (ipaFilePath == null) {
+      print('Error: Could not find IPA file in build/ios/ipa directory');
       print('Make sure the build completed successfully');
       exit(1);
     }
+    print('Found IPA file: $ipaFilePath');
 
     // 4. Run the flutter_app_host upload command
     // Note: flutter_app_host command should run from app directory
@@ -226,4 +222,25 @@ Future<String?> getIosBundleIdentifierFromConfig() async {
   final configContent = await configFile.readAsString();
   final config = json.decode(configContent);
   return config['ios_bundle_identifier'];
+}
+
+// Function to find the IPA file in the build directory
+Future<String?> findIpaFile() async {
+  final ipaDirectory = Directory(_getAppPath(p.join('build', 'ios', 'ipa')));
+
+  if (!await ipaDirectory.exists()) {
+    return null;
+  }
+
+  // List all files in the IPA directory
+  final entries = ipaDirectory.listSync();
+
+  // Find the first .ipa file
+  for (final entry in entries) {
+    if (entry is File && entry.path.endsWith('.ipa')) {
+      return entry.path;
+    }
+  }
+
+  return null;
 }
