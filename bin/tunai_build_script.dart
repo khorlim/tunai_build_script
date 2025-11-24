@@ -184,10 +184,8 @@ Future<int> _buildIos() async {
 }
 
 Future<int> _buildAndroid() async {
-  // Default to appbundle for Play Store, but check if user wants APK
-  // For now, we'll use appbundle as default (can be extended later with --apk flag)
-  final buildArgs = <String>['build', 'appbundle'];
-  print('Building Android App Bundle (AAB) for Play Store');
+  final buildArgs = <String>['build', 'apk'];
+  print('Building Android APK for Play Store');
 
   return await runCommandInAppDir('flutter', buildArgs);
 }
