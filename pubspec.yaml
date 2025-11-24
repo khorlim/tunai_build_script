@@ -15,6 +15,7 @@ dependencies:
 
 executables:
   tunai_build_script: bin/tunai_build_script.dart
+  bump_version: bin/bump_version.dart
 
 dev_dependencies:
   flutter_test:
