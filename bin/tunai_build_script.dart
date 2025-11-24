@@ -152,7 +152,6 @@ Future<void> performUpload() async {
     // 4. Run the flutter_app_host upload command
     // Note: flutter_app_host command should run from package directory
     final uploadExitCode = await runCommandInPackageDir('flutter', [
-      'packages',
       'pub',
       'run',
       'flutter_app_host',
