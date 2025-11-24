@@ -191,11 +191,16 @@ Future<void> updateBuildGradle(
     'versionName "$versionName"',
   );
 
-  // Update versionCode
-  content = content.replaceFirst(
-    RegExp(r'versionCode\s+\d+'),
-    'versionCode $buildNumber',
-  );
+  // Update versionCode - get current value and increment by 1
+  final versionCodeMatch = RegExp(r'versionCode\s+(\d+)').firstMatch(content);
+  if (versionCodeMatch != null) {
+    final currentVersionCode = int.parse(versionCodeMatch.group(1)!);
+    final newVersionCode = currentVersionCode + 1;
+    content = content.replaceFirst(
+      RegExp(r'versionCode\s+\d+'),
+      'versionCode $newVersionCode',
+    );
+  }
 
   await buildGradleFile.writeAsString(content);
 }
