@@ -6,8 +6,9 @@ String? _appDir;
 String? _packageDir;
 
 void main(List<String> arguments) async {
-  // Find the package directory (where this script's package is located)
-  _packageDir = _findPackageDirectory();
+  // Get the package directory (parent of bin directory)
+  final scriptPath = Platform.script.toFilePath();
+  _packageDir = p.dirname(p.dirname(scriptPath));
   try {
     // Parse app directory from arguments
     _appDir = _parseAppDir(arguments);
@@ -55,74 +56,6 @@ String? _parseAppDir(List<String> arguments) {
 
 String _getAppPath(String relativePath) {
   return p.join(_appDir!, relativePath);
-}
-
-// Function to find the package directory where this script is located
-String? _findPackageDirectory() {
-  try {
-    // Get the script's location
-    final scriptPath = Platform.script.toFilePath();
-    final scriptFile = File(scriptPath);
-
-    if (scriptFile.existsSync()) {
-      // Script is at bin/tunai_build_script.dart, package root is parent of bin/
-      final scriptDir = scriptFile.parent.path; // bin/
-      final packageRoot = p.dirname(scriptDir); // package root
-
-      // Verify it's the package root by checking for pubspec.yaml
-      final pubspecFile = File(p.join(packageRoot, 'pubspec.yaml'));
-      if (pubspecFile.existsSync()) {
-        final content = pubspecFile.readAsStringSync();
-        // Verify it's the right package
-        if (content.contains('tunai_build_script') ||
-            content.contains('flutter_app_host')) {
-          return packageRoot;
-        }
-      }
-    }
-
-    // Check pub cache (for globally installed packages)
-    final pubCache =
-        Platform.environment['PUB_CACHE'] ??
-        p.join(Platform.environment['HOME'] ?? '', '.pub-cache');
-    final pubCacheHosted = p.join(pubCache, 'hosted', 'pub.dev');
-    if (Directory(pubCacheHosted).existsSync()) {
-      // Look for tunai_build_script in pub cache
-      final pubCacheDir = Directory(pubCacheHosted);
-      final entries = pubCacheDir.listSync();
-      for (final entry in entries) {
-        if (entry is Directory && entry.path.contains('tunai_build_script')) {
-          final pubspecFile = File(p.join(entry.path, 'pubspec.yaml'));
-          if (pubspecFile.existsSync()) {
-            return entry.path;
-          }
-        }
-      }
-    }
-
-    // Fallback: try to find it relative to current working directory
-    // This handles cases where the script is run via pub global or dart run
-    final currentDir = Directory.current.path;
-    final possiblePackageDir = p.join(currentDir, 'tunai_build_script');
-    final pubspecFile = File(p.join(possiblePackageDir, 'pubspec.yaml'));
-    if (pubspecFile.existsSync()) {
-      return possiblePackageDir;
-    }
-
-    // Try current directory if it has pubspec.yaml with tunai_build_script
-    final currentPubspec = File(p.join(currentDir, 'pubspec.yaml'));
-    if (currentPubspec.existsSync()) {
-      final content = currentPubspec.readAsStringSync();
-      if (content.contains('tunai_build_script')) {
-        return currentDir;
-      }
-    }
-
-    return null;
-  } catch (e) {
-    print('Warning: Could not determine package directory: $e');
-    return null;
-  }
 }
 
 Future<void> performBuild({bool update = true}) async {
@@ -217,12 +150,17 @@ Future<void> performUpload() async {
     print('Found IPA file: $ipaFilePath');
 
     // 4. Run the flutter_app_host upload command
-    // flutter_app_host is in this package's dev_dependencies, so run it from package directory
-    final uploadExitCode = await runFlutterAppHost(
+    // Note: flutter_app_host command should run from package directory
+    final uploadExitCode = await runCommandInPackageDir('flutter', [
+      'packages',
+      'pub',
+      'run',
+      'flutter_app_host',
+      'ipa',
       version,
       ipaFilePath,
       iosBundleIdentifier,
-    );
+    ]);
 
     if (uploadExitCode != 0) {
       throw Exception(
@@ -265,56 +203,23 @@ Future<int> runCommandInAppDir(String command, List<String> arguments) async {
   return await process.exitCode;
 }
 
-// Function to run flutter_app_host from the package directory
-Future<int> runFlutterAppHost(
-  String version,
-  String ipaFilePath,
-  String iosBundleIdentifier,
+// Function to run a shell command in the package directory
+Future<int> runCommandInPackageDir(
+  String command,
+  List<String> arguments,
 ) async {
-  // Try to find the package directory if not already found
-  if (_packageDir == null) {
-    _packageDir = _findPackageDirectory();
-  }
-
-  if (_packageDir != null) {
-    // Run from package directory where flutter_app_host is a dev dependency
-    print('Running flutter_app_host from package directory: $_packageDir');
-    final process = await Process.start('flutter', [
-      'packages',
-      'pub',
-      'run',
-      'flutter_app_host',
-      'ipa',
-      version,
-      ipaFilePath,
-      iosBundleIdentifier,
-    ], workingDirectory: _packageDir);
-    process.stdout.transform(utf8.decoder).listen((data) {
-      print(data);
-    });
-    process.stderr.transform(utf8.decoder).listen((data) {
-      print(data);
-    });
-    return await process.exitCode;
-  } else {
-    // Fallback: try using dart run (requires package to be in pub cache or path)
-    print('Warning: Package directory not found, trying dart run...');
-    final process = await Process.start('dart', [
-      'run',
-      'flutter_app_host',
-      'ipa',
-      version,
-      ipaFilePath,
-      iosBundleIdentifier,
-    ], workingDirectory: _appDir);
-    process.stdout.transform(utf8.decoder).listen((data) {
-      print(data);
-    });
-    process.stderr.transform(utf8.decoder).listen((data) {
-      print(data);
-    });
-    return await process.exitCode;
-  }
+  final process = await Process.start(
+    command,
+    arguments,
+    workingDirectory: _packageDir,
+  );
+  process.stdout.transform(utf8.decoder).listen((data) {
+    print(data);
+  });
+  process.stderr.transform(utf8.decoder).listen((data) {
+    print(data);
+  });
+  return await process.exitCode;
 }
 
 // Function to get the version from pubspec.yaml
