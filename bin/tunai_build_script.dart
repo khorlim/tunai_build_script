@@ -9,6 +9,7 @@ void main(List<String> arguments) async {
   // Get the package directory (parent of bin directory)
   final scriptPath = Platform.script.toFilePath();
   _packageDir = p.dirname(p.dirname(scriptPath));
+  print('Package directory: $_packageDir');
   try {
     // Parse app directory from arguments
     _appDir = _parseAppDir(arguments);
