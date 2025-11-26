@@ -132,14 +132,29 @@ void main(List<String> arguments) async {
       print('ℹ Info.plist not found at $infoPlistPath (skipping)');
     }
 
-    // Update build.gradle if it exists
+    // Update build.gradle or build.gradle.kts if it exists
     final buildGradlePath = p.join(appDir, 'android', 'app', 'build.gradle');
+    final buildGradleKtsPath = p.join(
+      appDir,
+      'android',
+      'app',
+      'build.gradle.kts',
+    );
     final buildGradleFile = File(buildGradlePath);
+    final buildGradleKtsFile = File(buildGradleKtsPath);
+
     if (await buildGradleFile.exists()) {
       await updateBuildGradle(buildGradleFile, newVersionName, newBuildNumber);
       print('✓ Updated build.gradle');
+    } else if (await buildGradleKtsFile.exists()) {
+      await updateBuildGradle(
+        buildGradleKtsFile,
+        newVersionName,
+        newBuildNumber,
+      );
+      print('✓ Updated build.gradle.kts');
     } else {
-      print('ℹ build.gradle not found at $buildGradlePath (skipping)');
+      print('ℹ build.gradle/build.gradle.kts not found (skipping)');
     }
 
     print('\nVersion bump completed successfully!');
@@ -185,17 +200,29 @@ Future<void> updateBuildGradle(
 ) async {
   var content = await buildGradleFile.readAsString();
 
-  // Update versionName
-  content = content.replaceFirst(
-    RegExp(r'versionName\s+"[^"]+"'),
-    'versionName "$versionName"',
-  );
+  // Update versionName (supports both Groovy: versionName "1.0.0" and Kotlin DSL: versionName = "1.0.0")
+  final versionNameMatch = RegExp(
+    r'versionName(\s*=?\s*)"[^"]+"',
+  ).firstMatch(content);
+  if (versionNameMatch != null) {
+    final assignment = versionNameMatch.group(1)!;
+    content = content.replaceFirst(
+      RegExp(r'versionName\s*=?\s*"[^"]+"'),
+      'versionName$assignment"$versionName"',
+    );
+  }
 
-  // Update versionCode
-  content = content.replaceFirst(
-    RegExp(r'versionCode\s+\d+'),
-    'versionCode $buildNumber',
-  );
+  // Update versionCode (supports both Groovy: versionCode 1 and Kotlin DSL: versionCode = 1)
+  final versionCodeMatch = RegExp(
+    r'versionCode(\s*=?\s*)\d+',
+  ).firstMatch(content);
+  if (versionCodeMatch != null) {
+    final assignment = versionCodeMatch.group(1)!;
+    content = content.replaceFirst(
+      RegExp(r'versionCode\s*=?\s*\d+'),
+      'versionCode$assignment$buildNumber',
+    );
+  }
 
   await buildGradleFile.writeAsString(content);
 }
