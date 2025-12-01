@@ -219,15 +219,27 @@ Future<void> updateBuildGradle(
   var content = await buildGradleFile.readAsString();
 
   // Update versionName (supports both Groovy: versionName "1.0.0" and Kotlin DSL: versionName = "1.0.0")
-  final versionNameMatch = RegExp(
-    r'versionName(\s*=?\s*)"[^"]+"',
+  // Also supports flutter.versionName references: versionName = flutter.versionName
+  final flutterVersionNameMatch = RegExp(
+    r'versionName(\s*=?\s*)flutter\.versionName',
   ).firstMatch(content);
-  if (versionNameMatch != null) {
-    final assignment = versionNameMatch.group(1)!;
+  if (flutterVersionNameMatch != null) {
+    final assignment = flutterVersionNameMatch.group(1)!;
     content = content.replaceFirst(
-      RegExp(r'versionName\s*=?\s*"[^"]+"'),
+      RegExp(r'versionName\s*=?\s*flutter\.versionName'),
       'versionName$assignment"$versionName"',
     );
+  } else {
+    final versionNameMatch = RegExp(
+      r'versionName(\s*=?\s*)"[^"]+"',
+    ).firstMatch(content);
+    if (versionNameMatch != null) {
+      final assignment = versionNameMatch.group(1)!;
+      content = content.replaceFirst(
+        RegExp(r'versionName\s*=?\s*"[^"]+"'),
+        'versionName$assignment"$versionName"',
+      );
+    }
   }
 
   // Update versionCode (supports both Groovy: versionCode 1 and Kotlin DSL: versionCode = 1)
