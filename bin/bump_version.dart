@@ -95,13 +95,25 @@ void main(List<String> arguments) async {
         major++;
         minor = 0;
         patch = 0;
+        // Ask if user wants to bump build number
+        if (await askToBumpBuildNumber()) {
+          newBuildNumber++;
+        }
         break;
       case 'minor':
         minor++;
         patch = 0;
+        // Ask if user wants to bump build number
+        if (await askToBumpBuildNumber()) {
+          newBuildNumber++;
+        }
         break;
       case 'patch':
         patch++;
+        // Ask if user wants to bump build number
+        if (await askToBumpBuildNumber()) {
+          newBuildNumber++;
+        }
         break;
       case 'build':
         newBuildNumber++;
@@ -163,6 +175,12 @@ void main(List<String> arguments) async {
     print(stackTrace);
     exit(1);
   }
+}
+
+Future<bool> askToBumpBuildNumber() async {
+  stdout.write('Do you want to bump the build number? (y/n): ');
+  final input = stdin.readLineSync()?.trim().toLowerCase();
+  return input == 'y' || input == 'yes';
 }
 
 Future<void> updateInfoPlist(
