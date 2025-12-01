@@ -243,15 +243,27 @@ Future<void> updateBuildGradle(
   }
 
   // Update versionCode (supports both Groovy: versionCode 1 and Kotlin DSL: versionCode = 1)
-  final versionCodeMatch = RegExp(
-    r'versionCode(\s*=?\s*)\d+',
+  // Also supports flutter.versionCode references: versionCode = flutter.versionCode
+  final flutterVersionCodeMatch = RegExp(
+    r'versionCode(\s*=?\s*)flutter\.versionCode',
   ).firstMatch(content);
-  if (versionCodeMatch != null) {
-    final assignment = versionCodeMatch.group(1)!;
+  if (flutterVersionCodeMatch != null) {
+    final assignment = flutterVersionCodeMatch.group(1)!;
     content = content.replaceFirst(
-      RegExp(r'versionCode\s*=?\s*\d+'),
+      RegExp(r'versionCode\s*=?\s*flutter\.versionCode'),
       'versionCode$assignment$buildNumber',
     );
+  } else {
+    final versionCodeMatch = RegExp(
+      r'versionCode(\s*=?\s*)\d+',
+    ).firstMatch(content);
+    if (versionCodeMatch != null) {
+      final assignment = versionCodeMatch.group(1)!;
+      content = content.replaceFirst(
+        RegExp(r'versionCode\s*=?\s*\d+'),
+        'versionCode$assignment$buildNumber',
+      );
+    }
   }
 
   await buildGradleFile.writeAsString(content);
