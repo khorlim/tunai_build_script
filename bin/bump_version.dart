@@ -134,14 +134,24 @@ void main(List<String> arguments) async {
     await pubspecFile.writeAsString(newPubspecContent);
     print('✓ Updated pubspec.yaml');
 
-    // Update Info.plist if it exists
-    final infoPlistPath = p.join(appDir, 'ios', 'Runner', 'Info.plist');
-    final infoPlistFile = File(infoPlistPath);
-    if (await infoPlistFile.exists()) {
-      await updateInfoPlist(infoPlistFile, newVersionName, newBuildNumber);
-      print('✓ Updated Info.plist');
+    // Update iOS Info.plist if it exists
+    final iosInfoPlistPath = p.join(appDir, 'ios', 'Runner', 'Info.plist');
+    final iosInfoPlistFile = File(iosInfoPlistPath);
+    if (await iosInfoPlistFile.exists()) {
+      await updateInfoPlist(iosInfoPlistFile, newVersionName, newBuildNumber);
+      print('✓ Updated iOS Info.plist');
     } else {
-      print('ℹ Info.plist not found at $infoPlistPath (skipping)');
+      print('ℹ iOS Info.plist not found at $iosInfoPlistPath (skipping)');
+    }
+
+    // Update macOS Info.plist if it exists
+    final macosInfoPlistPath = p.join(appDir, 'macos', 'Runner', 'Info.plist');
+    final macosInfoPlistFile = File(macosInfoPlistPath);
+    if (await macosInfoPlistFile.exists()) {
+      await updateInfoPlist(macosInfoPlistFile, newVersionName, newBuildNumber);
+      print('✓ Updated macOS Info.plist');
+    } else {
+      print('ℹ macOS Info.plist not found at $macosInfoPlistPath (skipping)');
     }
 
     // Update build.gradle or build.gradle.kts if it exists
