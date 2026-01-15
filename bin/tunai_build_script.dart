@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:path/path.dart' as p;
-import 'package:flutter_app_host/flutter_app_host.dart' as host;
 import 'package:http/http.dart' as http;
 
 String? _appDir;
@@ -162,9 +161,10 @@ Future<void> performBuild({bool update = true}) async {
     errorMessage = e.toString();
     print('An error occurred during build: $e');
   } finally {
-    // Send Telegram notification if telegram_bot.env exists
-    await sendTelegramNotificationIfConfigured(buildSuccess, errorMessage);
+    // Send Telegram notification only on failure
+    // Success notifications are handled by performUpload with install URL
     if (!buildSuccess) {
+      await sendTelegramNotificationIfConfigured(buildSuccess, errorMessage);
       exit(1);
     }
   }
@@ -245,15 +245,15 @@ Future<void> performUpload() async {
       print('Found IPA file: $buildFilePath');
     } else if (platform == 'android') {
       // 2. Get the Android package name from .apphost
-      // final androidPackageName = await getAndroidPackageNameFromConfig();
-      // if (androidPackageName == null) {
-      //   print('Error: Could not find Android package name in .apphost');
-      //   print(
-      //     'Make sure .apphost file exists in the app directory with android_package_name field',
-      //   );
-      //   exit(1);
-      // }
-      // bundleIdentifier = androidPackageName;
+      final androidPackageName = await getAndroidPackageNameFromConfig();
+      if (androidPackageName == null) {
+        print('Error: Could not find Android package name in .apphost');
+        print(
+          'Make sure .apphost file exists in the app directory with android_package_name field',
+        );
+        exit(1);
+      }
+      bundleIdentifier = androidPackageName;
 
       // 3. Find AAB or APK file path dynamically
       final androidFile = await findAndroidBuildFile();
@@ -268,15 +268,42 @@ Future<void> performUpload() async {
       throw Exception('Unknown platform: $platform');
     }
 
-    // 4. Run the flutter_app_host upload command
-    // Note: flutter_app_host command should run from package directory
-    try {
-      await host.do_upload(platform, buildFilePath, version, bundleIdentifier);
-    } catch (e) {
-      throw Exception('flutter_app_host upload failed with error $e');
+    // 4. Get apphost configuration
+    final apphostConfig = await getApphostConfig();
+    if (apphostConfig == null) {
+      throw Exception(
+        'Error: Could not find .apphost config file in app directory',
+      );
     }
 
+    // 5. Get app name from pubspec.yaml
+    final appName = await getAppNameFromPubspec();
+    if (appName == null) {
+      throw Exception('Error: Could not find app name in pubspec.yaml');
+    }
+
+    // 6. Upload to apphost manually
+    final installUrl = await uploadToApphost(
+      platform: platform,
+      buildFilePath: buildFilePath,
+      version: version,
+      bundleIdentifier: bundleIdentifier,
+      apphostConfig: apphostConfig,
+    );
+
     print('Upload completed successfully!');
+    print('Install your app from:');
+    print(installUrl);
+    print('');
+
+    // 7. Send Telegram notification with install URL
+    await sendTelegramNotificationWithInstallUrl(
+      buildSuccess: true,
+      platform: platform,
+      version: version,
+      appName: appName,
+      installUrl: installUrl,
+    );
   } catch (e) {
     print('An error occurred during upload: $e');
     exit(1);
@@ -343,16 +370,41 @@ Future<String?> getVersionFromPubspec() async {
   return match?.group(1);
 }
 
-// Function to get the iOS bundle identifier from the .apphost config file
-Future<String?> getIosBundleIdentifierFromConfig() async {
+// Function to get the app name from pubspec.yaml
+Future<String?> getAppNameFromPubspec() async {
+  final pubspecFile = File(_getAppPath('pubspec.yaml'));
+  if (!await pubspecFile.exists()) {
+    return null;
+  }
+  final pubspecContent = await pubspecFile.readAsString();
+  final regex = RegExp(r'^name:\s*(\S+)', multiLine: true);
+  final match = regex.firstMatch(pubspecContent);
+  return match?.group(1);
+}
+
+// Function to get the apphost configuration
+Future<Map<String, dynamic>?> getApphostConfig() async {
   final configFile = File(_getAppPath('.apphost'));
   if (!await configFile.exists()) {
-    print('Error: Could not find .apphost config file in app directory');
     return null;
   }
   final configContent = await configFile.readAsString();
-  final config = json.decode(configContent);
-  return config['ios_bundle_identifier'];
+  try {
+    final config = json.decode(configContent) as Map<String, dynamic>;
+    return config;
+  } catch (e) {
+    print('Error parsing .apphost file: $e');
+    return null;
+  }
+}
+
+// Function to get the iOS bundle identifier from the .apphost config file
+Future<String?> getIosBundleIdentifierFromConfig() async {
+  final config = await getApphostConfig();
+  if (config == null) {
+    return null;
+  }
+  return config['ios_bundle_identifier'] as String?;
 }
 
 // Function to get the Android package name from the .apphost config file
@@ -627,4 +679,165 @@ If you received this message, your Telegram bot configuration is working correct
   print(
     'Test completed! Check your Telegram chat to verify the message was received.',
   );
+}
+
+// Function to upload to apphost manually
+Future<String> uploadToApphost({
+  required String platform,
+  required String buildFilePath,
+  required String version,
+  required String bundleIdentifier,
+  required Map<String, dynamic> apphostConfig,
+}) async {
+  final userId = apphostConfig['user_id'] as String?;
+  final appId = apphostConfig['app_id'] as String?;
+  final key = apphostConfig['key'] as String?;
+
+  if (userId == null || appId == null || key == null) {
+    throw Exception(
+      'Error: Missing required fields in .apphost (user_id, app_id, key)',
+    );
+  }
+
+  // Fetch upload URL
+  print('Fetching upload URL...');
+  final uploadUrlParams = {
+    'user_id': userId,
+    'app_id': appId,
+    'key': key,
+    'platform': platform,
+    'version': version,
+    if (platform == 'ios')
+      'ios_bundle_identifier': bundleIdentifier
+    else if (platform == 'android')
+      'android_package_name': bundleIdentifier,
+  };
+
+  final uploadUrlUri = Uri.parse('https://appho.st/api/get_upload_url').replace(
+    queryParameters: uploadUrlParams.map((k, v) => MapEntry(k, v.toString())),
+  );
+
+  final uploadUrlResponse = await http.get(uploadUrlUri);
+  if (uploadUrlResponse.statusCode != 200) {
+    throw Exception(
+      'Error fetching upload URL: ${uploadUrlResponse.statusCode} - ${uploadUrlResponse.body}',
+    );
+  }
+
+  final uploadUrl = uploadUrlResponse.body.trim();
+  if (!uploadUrl.startsWith('https://')) {
+    throw Exception('Error fetching upload URL: $uploadUrl');
+  }
+
+  // Upload file
+  print('Uploading file...');
+  final buildFile = File(buildFilePath);
+  if (!await buildFile.exists()) {
+    throw Exception('Build file not found: $buildFilePath');
+  }
+
+  final fileBytes = await buildFile.readAsBytes();
+  final fileSize = fileBytes.length;
+
+  final uploadResponse = await http.put(
+    Uri.parse(uploadUrl),
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': fileSize.toString(),
+    },
+    body: fileBytes,
+  );
+
+  if (uploadResponse.statusCode != 200) {
+    throw Exception(
+      'Error uploading file: ${uploadResponse.statusCode} - ${uploadResponse.body}',
+    );
+  }
+
+  print('File uploaded successfully');
+
+  // Get install URL
+  print('Fetching install URL...');
+  final installUrlParams = {'u': userId, 'a': appId, 'platform': platform};
+
+  final installUrlUri = Uri.parse('https://appho.st/api/get_current_version/')
+      .replace(
+        queryParameters: installUrlParams.map(
+          (k, v) => MapEntry(k, v.toString()),
+        ),
+      );
+
+  final installUrlResponse = await http.get(installUrlUri);
+  if (installUrlResponse.statusCode != 200) {
+    throw Exception(
+      'Error fetching install URL: ${installUrlResponse.statusCode} - ${installUrlResponse.body}',
+    );
+  }
+
+  try {
+    final installUrlJson = json.decode(installUrlResponse.body) as Map;
+    final installUrl = installUrlJson['url'] as String?;
+    if (installUrl == null) {
+      throw Exception('Install URL not found in response');
+    }
+    return installUrl;
+  } catch (e) {
+    // Fallback: try to extract URL from response if JSON parsing fails
+    final urlMatch = RegExp(
+      r'"url"\s*:\s*"([^"]+)"',
+    ).firstMatch(installUrlResponse.body);
+    if (urlMatch != null) {
+      return urlMatch.group(1)!;
+    }
+    throw Exception('Could not parse install URL from response: $e');
+  }
+}
+
+// Function to send Telegram notification with install URL
+Future<void> sendTelegramNotificationWithInstallUrl({
+  required bool buildSuccess,
+  required String platform,
+  required String version,
+  required String appName,
+  required String installUrl,
+}) async {
+  if (!await checkTelegramBotEnvExists()) {
+    return;
+  }
+
+  final env = await parseTelegramBotEnv();
+  if (env == null) {
+    print('Warning: telegram_bot.env exists but is missing required fields');
+    return;
+  }
+
+  final botToken = env['TELEGRAM_BOT_TOKEN']!;
+  final chatId = env['TELEGRAM_CHAT_ID']!;
+  final topicId = env['TELEGRAM_TOPIC_ID'];
+
+  String message;
+  if (buildSuccess) {
+    message =
+        '''
+✅ <b>Build & Upload Completed Successfully</b>
+
+App: $appName
+Platform: $platform
+Version: $version
+
+📱 <b>Install URL:</b>
+$installUrl
+''';
+  } else {
+    message =
+        '''
+❌ <b>Build Failed</b>
+
+App: $appName
+Platform: $platform
+Version: $version
+''';
+  }
+
+  await sendTelegramNotification(botToken, chatId, message, topicId: topicId);
 }
