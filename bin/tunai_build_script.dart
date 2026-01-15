@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app_host/flutter_app_host.dart' as host;
+import 'package:http/http.dart' as http;
 
 String? _appDir;
 String? _packageDir;
@@ -27,6 +28,12 @@ void main(List<String> arguments) async {
       // Default to current directory
       _appDir = Directory.current.path;
       print('Using current directory as app directory');
+    }
+
+    if (arguments.contains('--test-telegram')) {
+      // Test Telegram bot notification
+      await testTelegramBot();
+      return;
     }
 
     // Parse platform from arguments or auto-detect
@@ -110,6 +117,8 @@ String _getAppPath(String relativePath) {
 }
 
 Future<void> performBuild({bool update = true}) async {
+  bool buildSuccess = false;
+  String? errorMessage;
   try {
     print('Starting the build process for $_platform...');
 
@@ -148,9 +157,16 @@ Future<void> performBuild({bool update = true}) async {
     await performUpload();
 
     print('Build and upload process completed successfully!');
+    buildSuccess = true;
   } catch (e) {
+    errorMessage = e.toString();
     print('An error occurred during build: $e');
-    exit(1);
+  } finally {
+    // Send Telegram notification if telegram_bot.env exists
+    await sendTelegramNotificationIfConfigured(buildSuccess, errorMessage);
+    if (!buildSuccess) {
+      exit(1);
+    }
   }
 }
 
@@ -414,4 +430,201 @@ Future<String?> findAndroidBuildFile() async {
   }
 
   return null;
+}
+
+// Function to check if telegram_bot.env exists in app directory
+Future<bool> checkTelegramBotEnvExists() async {
+  final envFile = File(_getAppPath('telegram_bot.env'));
+  return await envFile.exists();
+}
+
+// Function to parse telegram_bot.env file
+Future<Map<String, String>?> parseTelegramBotEnv() async {
+  final envFile = File(_getAppPath('telegram_bot.env'));
+  if (!await envFile.exists()) {
+    return null;
+  }
+
+  final content = await envFile.readAsString();
+  final lines = content.split('\n');
+  final Map<String, String> env = {};
+
+  for (final line in lines) {
+    final trimmedLine = line.trim();
+    if (trimmedLine.isEmpty || trimmedLine.startsWith('#')) {
+      continue;
+    }
+
+    final equalIndex = trimmedLine.indexOf('=');
+    if (equalIndex == -1) {
+      continue;
+    }
+
+    final key = trimmedLine.substring(0, equalIndex).trim();
+    final value = trimmedLine.substring(equalIndex + 1).trim();
+    env[key] = value;
+  }
+
+  // Check if all required keys are present
+  if (env.containsKey('TELEGRAM_BOT_TOKEN') &&
+      env.containsKey('TELEGRAM_CHAT_ID')) {
+    return env;
+  }
+
+  return null;
+}
+
+// Function to send Telegram notification
+Future<void> sendTelegramNotification(
+  String botToken,
+  String chatId,
+  String message, {
+  String? topicId,
+}) async {
+  try {
+    final url = Uri.parse('https://api.telegram.org/bot$botToken/sendMessage');
+
+    final Map<String, dynamic> body = {
+      'chat_id': chatId,
+      'text': message,
+      'parse_mode': 'HTML',
+    };
+
+    if (topicId != null && topicId.isNotEmpty) {
+      body['message_thread_id'] = topicId;
+    }
+
+    final response = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode(body),
+    );
+
+    if (response.statusCode == 200) {
+      print('Telegram notification sent successfully');
+    } else {
+      print(
+        'Failed to send Telegram notification: ${response.statusCode} - ${response.body}, chatID: $chatId, topicID: $topicId',
+      );
+    }
+  } catch (e) {
+    print(
+      'Error sending Telegram notification: $e, chatID: $chatId, topicID: $topicId',
+    );
+  }
+}
+
+// Function to send Telegram notification if configured
+Future<void> sendTelegramNotificationIfConfigured(
+  bool buildSuccess,
+  String? errorMessage,
+) async {
+  if (!await checkTelegramBotEnvExists()) {
+    return;
+  }
+
+  final env = await parseTelegramBotEnv();
+  if (env == null) {
+    print('Warning: telegram_bot.env exists but is missing required fields');
+    return;
+  }
+
+  final botToken = env['TELEGRAM_BOT_TOKEN']!;
+  final chatId = env['TELEGRAM_CHAT_ID']!;
+  final topicId = env['TELEGRAM_TOPIC_ID'];
+
+  // Get version and platform info for the message
+  final version = await getVersionFromPubspec() ?? 'unknown';
+  final platform = _platform ?? 'unknown';
+
+  String message;
+  if (buildSuccess) {
+    message =
+        '''
+✅ <b>Build Completed Successfully</b>
+
+Platform: $platform
+Version: $version
+Status: Build and upload completed successfully
+''';
+  } else {
+    message =
+        '''
+❌ <b>Build Failed</b>
+
+Platform: $platform
+Version: $version
+Error: ${errorMessage ?? 'Unknown error'}
+''';
+  }
+
+  await sendTelegramNotification(botToken, chatId, message, topicId: topicId);
+}
+
+// Function to test Telegram bot notification
+Future<void> testTelegramBot() async {
+  print('Testing Telegram bot notification...');
+  print('');
+
+  // Check if telegram_bot.env exists
+  if (!await checkTelegramBotEnvExists()) {
+    print('Error: telegram_bot.env file not found in app directory');
+    print('Expected location: ${_getAppPath('telegram_bot.env')}');
+    print('');
+    print('Please create telegram_bot.env with the following format:');
+    print('TELEGRAM_BOT_TOKEN=your_bot_token');
+    print('TELEGRAM_CHAT_ID=your_chat_id');
+    print('TELEGRAM_TOPIC_ID=your_topic_id (optional)');
+    exit(1);
+  }
+
+  print('✓ Found telegram_bot.env file');
+
+  // Parse the env file
+  final env = await parseTelegramBotEnv();
+  if (env == null) {
+    print('Error: telegram_bot.env exists but is missing required fields');
+    print('Required fields: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID');
+    print('Optional fields: TELEGRAM_TOPIC_ID');
+    exit(1);
+  }
+
+  final botToken = env['TELEGRAM_BOT_TOKEN']!;
+  final chatId = env['TELEGRAM_CHAT_ID']!;
+  final topicId = env['TELEGRAM_TOPIC_ID'];
+
+  print('✓ Parsed telegram_bot.env successfully');
+  print('  Bot Token: ${botToken.substring(0, 10)}...');
+  print('  Chat ID: $chatId');
+  if (topicId != null && topicId.isNotEmpty) {
+    print('  Topic ID: $topicId');
+  } else {
+    print('  Topic ID: (not set)');
+  }
+  print('');
+
+  // Send test message
+  final testMessage =
+      '''
+🧪 <b>Telegram Bot Test</b>
+
+This is a test message from the build script.
+
+Timestamp: ${DateTime.now().toIso8601String()}
+App Directory: ${p.absolute(_appDir!)}
+
+If you received this message, your Telegram bot configuration is working correctly! ✅
+''';
+
+  print('Sending test message...');
+  await sendTelegramNotification(
+    botToken,
+    chatId,
+    testMessage,
+    topicId: topicId,
+  );
+  print('');
+  print(
+    'Test completed! Check your Telegram chat to verify the message was received.',
+  );
 }

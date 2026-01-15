@@ -6,7 +6,7 @@ import 'package:path/path.dart' as p;
 void main(List<String> arguments) async {
   if (arguments.isEmpty) {
     print(
-      'Usage: bump_version.dart [major|minor|patch|build] [--app-dir <path>]',
+      'Usage: bump_version.dart [major|minor|patch|build|manual] [--app-dir <path>]',
     );
     print('');
     print('Examples:');
@@ -22,16 +22,38 @@ void main(List<String> arguments) async {
     print(
       '  bump_version.dart build          # Bump build number (0.0.1+1 -> 0.0.1+2)',
     );
+    print(
+      '  bump_version.dart manual 1.2.3+5  # Set version to 1.2.3+5 (manual)',
+    );
     print('  bump_version.dart patch --app-dir /path/to/app');
     exit(1);
   }
 
   final bumpType = arguments[0].toLowerCase();
-  if (!['major', 'minor', 'patch', 'build'].contains(bumpType)) {
+  if (!['major', 'minor', 'patch', 'build', 'manual'].contains(bumpType)) {
     print(
-      'Error: Invalid bump type. Must be one of: major, minor, patch, build',
+      'Error: Invalid bump type. Must be one of: major, minor, patch, build, manual',
     );
     exit(1);
+  }
+
+  // For manual type, require version argument
+  String? manualVersion;
+  if (bumpType == 'manual') {
+    if (arguments.length < 2) {
+      print('Error: manual type requires a version argument');
+      print('Usage: bump_version.dart manual <version> [--app-dir <path>]');
+      print('Example: bump_version.dart manual 1.2.3+5');
+      exit(1);
+    }
+    manualVersion = arguments[1];
+    // Validate that the version argument is not --app-dir
+    if (manualVersion == '--app-dir') {
+      print('Error: manual type requires a version argument before --app-dir');
+      print('Usage: bump_version.dart manual <version> [--app-dir <path>]');
+      print('Example: bump_version.dart manual 1.2.3+5 --app-dir /path/to/app');
+      exit(1);
+    }
   }
 
   // Get app directory
@@ -117,6 +139,38 @@ void main(List<String> arguments) async {
         break;
       case 'build':
         newBuildNumber++;
+        break;
+      case 'manual':
+        // Parse manual version
+        try {
+          final manualParts = manualVersion!.split('+');
+          final manualVersionName = manualParts[0];
+          final manualBuildNumber = manualParts.length > 1
+              ? int.parse(manualParts[1])
+              : 1;
+
+          final manualVersionNumbers = manualVersionName
+              .split('.')
+              .map(int.parse)
+              .toList();
+          if (manualVersionNumbers.length != 3) {
+            print(
+              'Error: Invalid manual version format. Expected format: x.y.z or x.y.z+build',
+            );
+            exit(1);
+          }
+
+          major = manualVersionNumbers[0];
+          minor = manualVersionNumbers[1];
+          patch = manualVersionNumbers[2];
+          newBuildNumber = manualBuildNumber;
+        } catch (e) {
+          print(
+            'Error: Invalid manual version format. Expected format: x.y.z or x.y.z+build',
+          );
+          print('Details: $e');
+          exit(1);
+        }
         break;
     }
 
