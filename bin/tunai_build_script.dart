@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 String? _appDir;
 String? _packageDir;
 String? _platform;
+String? _changelogPath;
 
 void main(List<String> arguments) async {
   // Get the package directory (parent of bin directory)
@@ -34,6 +35,15 @@ void main(List<String> arguments) async {
       await testTelegramBot();
       return;
     }
+
+    if (arguments.contains('--test-upload-file')) {
+      // Test Telegram file upload
+      await testTelegramFileUpload(arguments);
+      return;
+    }
+
+    // Parse changelog path from arguments
+    _changelogPath = _parseChangelogPath(arguments);
 
     // Parse platform from arguments or auto-detect
     _platform = _parsePlatform(arguments);
@@ -72,6 +82,14 @@ String? _parseAppDir(List<String> arguments) {
     return arguments[pathIndex + 1];
   }
 
+  return null;
+}
+
+String? _parseChangelogPath(List<String> arguments) {
+  final changelogIndex = arguments.indexOf('--upload-changelog');
+  if (changelogIndex != -1 && changelogIndex + 1 < arguments.length) {
+    return arguments[changelogIndex + 1];
+  }
   return null;
 }
 
@@ -304,6 +322,11 @@ Future<void> performUpload() async {
       appName: appName,
       installUrl: installUrl,
     );
+
+    // 8. Upload changelog file if specified
+    if (_changelogPath != null) {
+      await uploadChangelogFile(_changelogPath!);
+    }
   } catch (e) {
     print('An error occurred during upload: $e');
     exit(1);
@@ -840,4 +863,194 @@ Version: $version
   }
 
   await sendTelegramNotification(botToken, chatId, message, topicId: topicId);
+}
+
+// Function to send file via Telegram
+Future<void> sendTelegramFile(
+  String botToken,
+  String chatId,
+  String filePath, {
+  String? topicId,
+  String? caption,
+}) async {
+  try {
+    final file = File(filePath);
+    if (!await file.exists()) {
+      throw Exception('File not found: $filePath');
+    }
+
+    final url = Uri.parse('https://api.telegram.org/bot$botToken/sendDocument');
+
+    final request = http.MultipartRequest('POST', url);
+    request.fields['chat_id'] = chatId;
+    if (topicId != null && topicId.isNotEmpty) {
+      request.fields['message_thread_id'] = topicId;
+    }
+    if (caption != null && caption.isNotEmpty) {
+      request.fields['caption'] = caption;
+    }
+
+    final fileName = p.basename(filePath);
+    final fileStream = file.openRead();
+    final fileLength = await file.length();
+    final multipartFile = http.MultipartFile(
+      'document',
+      fileStream,
+      fileLength,
+      filename: fileName,
+    );
+    request.files.add(multipartFile);
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode == 200) {
+      print('Telegram file sent successfully: $fileName');
+    } else {
+      print(
+        'Failed to send Telegram file: ${response.statusCode} - ${response.body}',
+      );
+    }
+  } catch (e) {
+    print('Error sending Telegram file: $e');
+    rethrow;
+  }
+}
+
+// Function to upload changelog file via Telegram
+Future<void> uploadChangelogFile(String changelogPath) async {
+  if (!await checkTelegramBotEnvExists()) {
+    print('Warning: telegram_bot.env not found, skipping changelog upload');
+    return;
+  }
+
+  final env = await parseTelegramBotEnv();
+  if (env == null) {
+    print('Warning: telegram_bot.env exists but is missing required fields');
+    return;
+  }
+
+  // Resolve changelog path relative to app directory
+  final changelogFile = File(_getAppPath(changelogPath));
+  if (!await changelogFile.exists()) {
+    print('Warning: Changelog file not found: ${changelogFile.path}');
+    print('Skipping changelog upload');
+    return;
+  }
+
+  print('Uploading changelog file: ${changelogFile.path}');
+
+  final botToken = env['TELEGRAM_BOT_TOKEN']!;
+  final chatId = env['TELEGRAM_CHAT_ID']!;
+  final topicId = env['TELEGRAM_TOPIC_ID'];
+
+  // Get app name and version for caption
+  final appName = await getAppNameFromPubspec() ?? 'App';
+  final version = await getVersionFromPubspec() ?? 'unknown';
+  final platform = _platform ?? 'unknown';
+
+  final caption =
+      '''
+📝 Changelog
+
+App: $appName
+Platform: $platform
+Version: $version
+''';
+
+  await sendTelegramFile(
+    botToken,
+    chatId,
+    changelogFile.path,
+    topicId: topicId,
+    caption: caption,
+  );
+}
+
+// Function to test Telegram file upload
+Future<void> testTelegramFileUpload(List<String> arguments) async {
+  print('Testing Telegram file upload...');
+  print('');
+
+  // Check if telegram_bot.env exists
+  if (!await checkTelegramBotEnvExists()) {
+    print('Error: telegram_bot.env file not found in app directory');
+    print('Expected location: ${_getAppPath('telegram_bot.env')}');
+    print('');
+    print('Please create telegram_bot.env with the following format:');
+    print('TELEGRAM_BOT_TOKEN=your_bot_token');
+    print('TELEGRAM_CHAT_ID=your_chat_id');
+    print('TELEGRAM_TOPIC_ID=your_topic_id (optional)');
+    exit(1);
+  }
+
+  // Get file path from arguments
+  String? filePath;
+  final filePathIndex = arguments.indexOf('--test-upload-file');
+  if (filePathIndex != -1 && filePathIndex + 1 < arguments.length) {
+    filePath = arguments[filePathIndex + 1];
+  }
+
+  if (filePath == null) {
+    print('Error: File path required');
+    print('Usage: --test-upload-file <file_path>');
+    print('Example: --test-upload-file changelog.md');
+    exit(1);
+  }
+
+  print('✓ Found telegram_bot.env file');
+
+  // Parse the env file
+  final env = await parseTelegramBotEnv();
+  if (env == null) {
+    print('Error: telegram_bot.env exists but is missing required fields');
+    print('Required fields: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID');
+    print('Optional fields: TELEGRAM_TOPIC_ID');
+    exit(1);
+  }
+
+  final botToken = env['TELEGRAM_BOT_TOKEN']!;
+  final chatId = env['TELEGRAM_CHAT_ID']!;
+  final topicId = env['TELEGRAM_TOPIC_ID'];
+
+  print('✓ Parsed telegram_bot.env successfully');
+  print('  Bot Token: ${botToken.substring(0, 10)}...');
+  print('  Chat ID: $chatId');
+  if (topicId != null && topicId.isNotEmpty) {
+    print('  Topic ID: $topicId');
+  } else {
+    print('  Topic ID: (not set)');
+  }
+  print('');
+
+  // Resolve file path relative to app directory
+  final testFile = File(_getAppPath(filePath));
+  if (!await testFile.exists()) {
+    print('Error: File not found: ${testFile.path}');
+    print('Make sure the file exists relative to the app directory');
+    exit(1);
+  }
+
+  print('✓ Found test file: ${testFile.path}');
+  print('  File size: ${await testFile.length()} bytes');
+  print('');
+
+  // Send test file
+  print('Uploading test file...');
+  try {
+    await sendTelegramFile(
+      botToken,
+      chatId,
+      testFile.path,
+      topicId: topicId,
+      caption: '🧪 Test file upload from build script',
+    );
+    print('');
+    print(
+      'Test completed! Check your Telegram chat to verify the file was received.',
+    );
+  } catch (e) {
+    print('Error: $e');
+    exit(1);
+  }
 }
