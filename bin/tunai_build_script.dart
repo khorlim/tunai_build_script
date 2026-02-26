@@ -7,6 +7,7 @@ String? _appDir;
 String? _packageDir;
 String? _platform;
 String? _changelogPath;
+String? _topicIdOverride;
 
 void main(List<String> arguments) async {
   // Get the package directory (parent of bin directory)
@@ -15,6 +16,7 @@ void main(List<String> arguments) async {
   try {
     // Parse app directory from arguments
     _appDir = _parseAppDir(arguments);
+    _topicIdOverride = _parseTopicId(arguments);
 
     if (_appDir != null) {
       // Validate that the app directory exists
@@ -105,6 +107,14 @@ String? _parsePlatform(List<String> arguments) {
       );
       return null;
     }
+  }
+  return null;
+}
+
+String? _parseTopicId(List<String> arguments) {
+  final topicIdIndex = arguments.indexOf('--topic-id');
+  if (topicIdIndex != -1 && topicIdIndex + 1 < arguments.length) {
+    return arguments[topicIdIndex + 1];
   }
   return null;
 }
@@ -606,7 +616,7 @@ Future<void> sendTelegramNotificationIfConfigured(
 
   final botToken = env['TELEGRAM_BOT_TOKEN']!;
   final chatId = env['TELEGRAM_CHAT_ID']!;
-  final topicId = env['TELEGRAM_TOPIC_ID'];
+  final topicId = _topicIdOverride ?? env['TELEGRAM_TOPIC_ID'];
 
   // Get version and platform info for the message
   final version = await getVersionFromPubspec() ?? 'unknown';
@@ -649,7 +659,7 @@ Future<void> testTelegramBot() async {
     print('Please create telegram_bot.env with the following format:');
     print('TELEGRAM_BOT_TOKEN=your_bot_token');
     print('TELEGRAM_CHAT_ID=your_chat_id');
-    print('TELEGRAM_TOPIC_ID=your_topic_id (optional)');
+    print('TELEGRAM_TOPIC_ID=your_topic_id (optional, or use --topic-id <id>)');
     exit(1);
   }
 
@@ -660,13 +670,13 @@ Future<void> testTelegramBot() async {
   if (env == null) {
     print('Error: telegram_bot.env exists but is missing required fields');
     print('Required fields: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID');
-    print('Optional fields: TELEGRAM_TOPIC_ID');
+    print('Optional fields: TELEGRAM_TOPIC_ID (or use --topic-id <id>)');
     exit(1);
   }
 
   final botToken = env['TELEGRAM_BOT_TOKEN']!;
   final chatId = env['TELEGRAM_CHAT_ID']!;
-  final topicId = env['TELEGRAM_TOPIC_ID'];
+  final topicId = _topicIdOverride ?? env['TELEGRAM_TOPIC_ID'];
 
   print('✓ Parsed telegram_bot.env successfully');
   print('  Bot Token: ${botToken.substring(0, 10)}...');
@@ -836,7 +846,7 @@ Future<void> sendTelegramNotificationWithInstallUrl({
 
   final botToken = env['TELEGRAM_BOT_TOKEN']!;
   final chatId = env['TELEGRAM_CHAT_ID']!;
-  final topicId = env['TELEGRAM_TOPIC_ID'];
+  final topicId = _topicIdOverride ?? env['TELEGRAM_TOPIC_ID'];
 
   String message;
   if (buildSuccess) {
@@ -942,7 +952,7 @@ Future<void> uploadChangelogFile(String changelogPath) async {
 
   final botToken = env['TELEGRAM_BOT_TOKEN']!;
   final chatId = env['TELEGRAM_CHAT_ID']!;
-  final topicId = env['TELEGRAM_TOPIC_ID'];
+  final topicId = _topicIdOverride ?? env['TELEGRAM_TOPIC_ID'];
 
   // Get app name and version for caption
   final appName = await getAppNameFromPubspec() ?? 'App';
@@ -980,7 +990,7 @@ Future<void> testTelegramFileUpload(List<String> arguments) async {
     print('Please create telegram_bot.env with the following format:');
     print('TELEGRAM_BOT_TOKEN=your_bot_token');
     print('TELEGRAM_CHAT_ID=your_chat_id');
-    print('TELEGRAM_TOPIC_ID=your_topic_id (optional)');
+    print('TELEGRAM_TOPIC_ID=your_topic_id (optional, or use --topic-id <id>)');
     exit(1);
   }
 
@@ -1005,13 +1015,13 @@ Future<void> testTelegramFileUpload(List<String> arguments) async {
   if (env == null) {
     print('Error: telegram_bot.env exists but is missing required fields');
     print('Required fields: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID');
-    print('Optional fields: TELEGRAM_TOPIC_ID');
+    print('Optional fields: TELEGRAM_TOPIC_ID (or use --topic-id <id>)');
     exit(1);
   }
 
   final botToken = env['TELEGRAM_BOT_TOKEN']!;
   final chatId = env['TELEGRAM_CHAT_ID']!;
-  final topicId = env['TELEGRAM_TOPIC_ID'];
+  final topicId = _topicIdOverride ?? env['TELEGRAM_TOPIC_ID'];
 
   print('✓ Parsed telegram_bot.env successfully');
   print('  Bot Token: ${botToken.substring(0, 10)}...');
