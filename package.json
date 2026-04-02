@@ -1,15 +1,13 @@
 {
   "name": "tunai-build-script",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Flutter build, apphost upload, Telegram notify, version bump, macOS TestFlight helpers",
   "type": "module",
   "engines": {
     "node": ">=18.0.0"
   },
   "bin": {
-    "tunai-build-script": "node/bin/tunai-build-script.mjs",
-    "tunai-bump-version": "node/bin/tunai-bump-version.mjs",
-    "tunai-upload-macos-testflight": "node/bin/tunai-upload-macos-testflight.mjs"
+    "tunai-build-script": "node/bin/tunai-build-script.mjs"
   },
   "files": [
     "node",

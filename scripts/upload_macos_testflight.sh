@@ -16,7 +16,7 @@
 # Required files:
 #   macos/ExportOptions.plist — use example/example_export_options_macos.plist as a template
 #     (method app-store, signingStyle automatic, your teamID).
-#   tunai-upload-macos-testflight can set SCHEME / EXPORT_PLIST from tunai_build_script_config.json.
+#   tunai-build-script --platform macos can set SCHEME / EXPORT_PLIST from tunai_build_script_config.json.
 #
 # Upload auth (pick one):
 #   export ASC_API_KEY_ID=...

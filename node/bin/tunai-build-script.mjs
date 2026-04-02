@@ -6,58 +6,144 @@ import { loadConfigFile, getTelegramSection } from '../lib/config.mjs';
 import { detectPlatform } from '../lib/platform-detect.mjs';
 import { performBuild, performUpload } from '../lib/build.mjs';
 import { sendTelegramMessage, sendTelegramDocument } from '../lib/telegram.mjs';
+import { bumpVersion } from '../lib/bump.mjs';
+import { runMacosTestflightScript } from '../lib/macos-testflight.mjs';
+
+const BUMP_TYPES = new Set(['major', 'minor', 'patch', 'build', 'manual']);
 
 function usage() {
   console.log(`Usage: tunai-build-script [options]
 
-Runs from your Flutter app repo (or any parent directory containing ${CONFIG_FILENAME}).
+  Looks for ${CONFIG_FILENAME} in cwd or a parent (except pure --bump-version / --platform macos
+  may resolve the app via pubspec.yaml or macos/ alone).
 
-Options:
-  --project-root <dir>     Flutter project root (must contain ${CONFIG_FILENAME})
-  --platform ios|android   Override auto-detect
-  --upload                 Upload only (skip build)
-  --no-update              Skip git pull, submodule update, flutter pub get
-  --upload-changelog <path> Path relative to project root (overrides config.upload.changelog_path)
-  --topic-id <id>          Telegram forum thread (overrides config / TELEGRAM_TOPIC_ID)
-  --test-telegram          Send a test Telegram message
-  --test-upload-file <path> Send a test file via Telegram (path relative to project root)
-  -h, --help               Show this help
+iOS / Android (apphost upload)
+  tunai-build-script
+  tunai-build-script --platform ios|android
+  tunai-build-script --upload
+  tunai-build-script --no-update
+  tunai-build-script --upload-changelog CHANGELOG.md
+
+macOS TestFlight (Xcode archive + scripts/upload_macos_testflight.sh)
+  tunai-build-script --platform macos
+  tunai-build-script --platform macos --build-only
+  tunai-build-script --platform macos --repo-update
+
+Version bump (pubspec + native metadata)
+  tunai-build-script --bump-version patch
+  tunai-build-script --bump-version manual 1.2.3+5
+  tunai-build-script --bump-version major --yes
+  tunai-build-script --bump-version minor --no-bump-build
+
+Telegram tests
+  tunai-build-script --test-telegram
+  tunai-build-script --test-upload-file <path>
+
+Global options (where applicable)
+  --project-root <dir>
+  --topic-id <id>
+
+  -h, -help, --help        Show this help
 `);
 }
 
 function parseArgs(argv) {
   const out = {
+    help: false,
     projectRoot: null,
+    bumpType: null,
+    manualVersion: null,
+    bumpYes: false,
+    bumpNoBumpBuild: false,
     platform: null,
+    macosBuildOnly: false,
+    macosRepoUpdate: false,
     uploadOnly: false,
     noUpdate: false,
     uploadChangelog: null,
     topicId: null,
     testTelegram: false,
     testUploadFile: null,
-    help: false,
   };
+
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '-h' || a === '--help') out.help = true;
+    if (a === '-h' || a === '-help' || a === '--help') out.help = true;
     else if (a === '--project-root') out.projectRoot = argv[++i];
-    else if (a === '--platform') out.platform = argv[++i]?.toLowerCase();
-    else if (a === '--upload') out.uploadOnly = true;
+    else if (a === '--platform') {
+      const p = argv[++i]?.toLowerCase();
+      if (!p) {
+        console.error('Error: --platform requires ios, android, or macos');
+        process.exit(1);
+      }
+      out.platform = p;
+    } else if (a === '--bump-version') {
+      const t = argv[++i];
+      if (!t || t.startsWith('-')) {
+        console.error(
+          'Error: --bump-version requires major|minor|patch|build|manual',
+        );
+        process.exit(1);
+      }
+      out.bumpType = t.toLowerCase();
+      if (!BUMP_TYPES.has(out.bumpType)) {
+        console.error(`Error: invalid bump type "${out.bumpType}"`);
+        process.exit(1);
+      }
+      if (out.bumpType === 'manual') {
+        out.manualVersion = argv[++i];
+        if (!out.manualVersion || out.manualVersion.startsWith('-')) {
+          console.error(
+            'Error: --bump-version manual requires a version like 1.2.3+5',
+          );
+          process.exit(1);
+        }
+      }
+    } else if (a === '--upload') out.uploadOnly = true;
     else if (a === '--no-update') out.noUpdate = true;
     else if (a === '--upload-changelog') out.uploadChangelog = argv[++i];
     else if (a === '--topic-id') out.topicId = argv[++i];
     else if (a === '--test-telegram') out.testTelegram = true;
     else if (a === '--test-upload-file') out.testUploadFile = argv[++i];
+    else if (a === '--build-only') out.macosBuildOnly = true;
+    else if (a === '--repo-update') out.macosRepoUpdate = true;
+    else if (a === '--yes') out.bumpYes = true;
+    else if (a === '--no-bump-build') out.bumpNoBumpBuild = true;
     else {
       console.error(`Unknown argument: ${a}`);
       usage();
       process.exit(1);
     }
   }
+
   return out;
 }
 
-function resolveProjectRoot(explicit) {
+function resolvePubspecRoot(explicit) {
+  if (explicit) {
+    const root = path.resolve(explicit);
+    if (!fs.existsSync(path.join(root, 'pubspec.yaml'))) {
+      console.error(`Error: pubspec.yaml not found in ${root}`);
+      process.exit(1);
+    }
+    return root;
+  }
+  const found = findProjectWithConfig(process.cwd());
+  if (found) return found.projectRoot;
+  let dir = process.cwd();
+  const { root: fsRoot } = path.parse(dir);
+  while (true) {
+    if (fs.existsSync(path.join(dir, 'pubspec.yaml'))) return dir;
+    if (dir === fsRoot) break;
+    dir = path.dirname(dir);
+  }
+  console.error(
+    'Error: Could not find pubspec.yaml. Pass --project-root or run from your Flutter app.',
+  );
+  process.exit(1);
+}
+
+function resolveProjectRootWithConfig(explicit) {
   if (explicit) {
     const root = path.resolve(explicit);
     const cfg = path.join(root, CONFIG_FILENAME);
@@ -83,6 +169,77 @@ function resolveProjectRoot(explicit) {
   return found;
 }
 
+function resolveMacosAppDir(explicitProjectRoot) {
+  if (explicitProjectRoot) {
+    const r = path.resolve(explicitProjectRoot);
+    if (!fs.existsSync(path.join(r, 'macos'))) {
+      console.error(`Error: macos/ not found under ${r}`);
+      process.exit(1);
+    }
+    return r;
+  }
+  const found = findProjectWithConfig(process.cwd());
+  if (found) return found.projectRoot;
+  const cwd = process.cwd();
+  if (fs.existsSync(path.join(cwd, 'macos'))) return cwd;
+  console.error(
+    'Error: Could not find macos/. Pass --project-root to your Flutter app or add tunai_build_script_config.json at the app root.',
+  );
+  process.exit(1);
+}
+
+function validateNoMix(args, mode) {
+  if (mode === 'bump') {
+    if (args.platform) {
+      console.error('Error: do not use --platform with --bump-version');
+      process.exit(1);
+    }
+    if (args.uploadOnly) {
+      console.error('Error: do not use --upload with --bump-version');
+      process.exit(1);
+    }
+    if (args.testTelegram || args.testUploadFile) {
+      console.error(
+        'Error: do not combine --bump-version with --test-telegram / --test-upload-file',
+      );
+      process.exit(1);
+    }
+    if (args.macosBuildOnly || args.macosRepoUpdate) {
+      console.error(
+        'Error: --build-only / --repo-update are only for --platform macos',
+      );
+      process.exit(1);
+    }
+  }
+  if (mode === 'build') {
+    if (args.macosBuildOnly || args.macosRepoUpdate) {
+      console.error(
+        'Error: --build-only and --repo-update require --platform macos',
+      );
+      process.exit(1);
+    }
+  }
+
+  if (mode === 'macos') {
+    if (args.uploadOnly) {
+      console.error(
+        'Error: --upload (apphost) applies only to iOS/Android, not macOS TestFlight',
+      );
+      process.exit(1);
+    }
+    if (args.bumpType) {
+      console.error('Error: do not combine --platform macos with --bump-version');
+      process.exit(1);
+    }
+    if (args.testTelegram || args.testUploadFile) {
+      console.error(
+        'Error: do not combine --platform macos with Telegram test flags',
+      );
+      process.exit(1);
+    }
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
@@ -90,7 +247,41 @@ async function main() {
     return;
   }
 
-  const { projectRoot, configPath } = resolveProjectRoot(args.projectRoot);
+  const mode = args.bumpType
+    ? 'bump'
+    : args.platform === 'macos'
+      ? 'macos'
+      : 'build';
+
+  validateNoMix(args, mode);
+
+  if (mode === 'bump') {
+    const root = resolvePubspecRoot(args.projectRoot);
+    console.log(`Bumping ${args.bumpType} in: ${path.resolve(root)}`);
+    await bumpVersion({
+      projectRoot: root,
+      bumpType: args.bumpType,
+      manualVersion: args.manualVersion,
+      yes: args.bumpYes,
+      noBumpBuild: args.bumpNoBumpBuild,
+    });
+    return;
+  }
+
+  if (mode === 'macos') {
+    const appDir = resolveMacosAppDir(args.projectRoot);
+    console.log(`Using app directory: ${appDir}`);
+    const code = await runMacosTestflightScript({
+      appDir,
+      buildOnly: args.macosBuildOnly,
+      repoUpdate: args.macosRepoUpdate,
+    });
+    process.exit(code);
+  }
+
+  const { projectRoot, configPath } = resolveProjectRootWithConfig(
+    args.projectRoot,
+  );
   console.log(`Using project root: ${projectRoot}`);
 
   const config = loadConfigFile(configPath);
@@ -147,7 +338,7 @@ async function main() {
 
   let platform = args.platform;
   if (platform && platform !== 'ios' && platform !== 'android') {
-    console.error('Error: --platform must be ios or android');
+    console.error('Error: for iOS/Android use --platform ios or android');
     process.exit(1);
   }
   if (!platform) {
