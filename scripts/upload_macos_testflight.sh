@@ -33,7 +33,8 @@
 set -euo pipefail
 
 BUILD_ONLY=false
-POD_REPO_UPDATE=()
+# Bash 5.2 + set -u treats empty arrays as unbound; use a flag instead of POD_REPO_UPDATE=( ).
+POD_INSTALL_REPO_UPDATE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,7 +43,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --repo-update)
-      POD_REPO_UPDATE=(--repo-update)
+      POD_INSTALL_REPO_UPDATE=true
       shift
       ;;
     -h|--help)
@@ -95,9 +96,9 @@ echo "==> App directory: $APP_DIR"
 echo "==> flutter pub get"
 ( cd "$APP_DIR" && flutter pub get )
 
-if ((${#POD_REPO_UPDATE[@]} > 0)); then
+if [[ "$POD_INSTALL_REPO_UPDATE" == true ]]; then
   echo "==> pod install (macos) with --repo-update"
-  ( cd "$MACOS_DIR" && pod install "${POD_REPO_UPDATE[@]}" )
+  ( cd "$MACOS_DIR" && pod install --repo-update )
 else
   echo "==> pod install (macos)"
   ( cd "$MACOS_DIR" && pod install )
