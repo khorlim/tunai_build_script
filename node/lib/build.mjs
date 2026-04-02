@@ -2,9 +2,14 @@ import fs from 'fs';
 import path from 'path';
 import { runInherit } from './run.mjs';
 import { getAppName, getVersion } from './pubspec.mjs';
-import { getApphostSection, getTelegramSection } from './config.mjs';
+import {
+  getApphostSection,
+  getLoadlySection,
+  getTelegramSection,
+} from './config.mjs';
 import { findAndroidBuildFile, findIpaFile } from './artifacts.mjs';
 import { uploadToApphost } from './apphost-upload.mjs';
+import { uploadToLoadly } from './loadly-upload.mjs';
 import { sendTelegramDocument, sendTelegramMessage } from './telegram.mjs';
 
 function resolvePath(projectRoot, rel) {
@@ -27,25 +32,19 @@ export async function performUpload({
     process.exit(1);
   }
 
-  const apphost = getApphostSection(config);
-  if (!apphost) {
+  const provider = String(
+    (config.upload && config.upload.provider) || 'apphost',
+  ).toLowerCase();
+  if (provider !== 'apphost' && provider !== 'loadly') {
     console.error(
-      'Error: Missing "apphost" in tunai_build_script_config.json',
+      `Error: upload.provider must be "apphost" or "loadly", got "${provider}"`,
     );
     process.exit(1);
   }
 
-  let bundleIdentifier;
   let buildFilePath;
 
   if (platform === 'ios') {
-    bundleIdentifier = apphost.ios_bundle_identifier;
-    if (!bundleIdentifier) {
-      console.error(
-        'Error: apphost.ios_bundle_identifier missing in tunai_build_script_config.json',
-      );
-      process.exit(1);
-    }
     const ipa = findIpaFile(projectRoot);
     if (!ipa) {
       console.error(
@@ -56,13 +55,6 @@ export async function performUpload({
     buildFilePath = ipa;
     console.log(`Found IPA file: ${buildFilePath}`);
   } else if (platform === 'android') {
-    bundleIdentifier = apphost.android_package_name;
-    if (!bundleIdentifier) {
-      console.error(
-        'Error: apphost.android_package_name missing in tunai_build_script_config.json',
-      );
-      process.exit(1);
-    }
     const androidFile = findAndroidBuildFile(projectRoot);
     if (!androidFile) {
       console.error(
@@ -76,17 +68,56 @@ export async function performUpload({
     throw new Error(`Unknown platform: ${platform}`);
   }
 
-  const installUrl = await uploadToApphost({
-    platform,
-    buildFilePath,
-    version,
-    bundleIdentifier,
-    apphost: {
-      user_id: String(apphost.user_id ?? ''),
-      app_id: String(apphost.app_id ?? ''),
-      key: String(apphost.key ?? ''),
-    },
-  });
+  let installUrl;
+  if (provider === 'loadly') {
+    const loadly = getLoadlySection(config);
+    if (!loadly) {
+      console.error(
+        'Error: upload.provider is "loadly" but loadly.api_key is missing in tunai_build_script_config.json',
+      );
+      process.exit(1);
+    }
+    installUrl = await uploadToLoadly({ buildFilePath, loadly });
+  } else {
+    const apphost = getApphostSection(config);
+    if (!apphost) {
+      console.error(
+        'Error: Missing "apphost" in tunai_build_script_config.json',
+      );
+      process.exit(1);
+    }
+
+    let bundleIdentifier;
+    if (platform === 'ios') {
+      bundleIdentifier = apphost.ios_bundle_identifier;
+      if (!bundleIdentifier) {
+        console.error(
+          'Error: apphost.ios_bundle_identifier missing in tunai_build_script_config.json',
+        );
+        process.exit(1);
+      }
+    } else {
+      bundleIdentifier = apphost.android_package_name;
+      if (!bundleIdentifier) {
+        console.error(
+          'Error: apphost.android_package_name missing in tunai_build_script_config.json',
+        );
+        process.exit(1);
+      }
+    }
+
+    installUrl = await uploadToApphost({
+      platform,
+      buildFilePath,
+      version,
+      bundleIdentifier,
+      apphost: {
+        user_id: String(apphost.user_id ?? ''),
+        app_id: String(apphost.app_id ?? ''),
+        key: String(apphost.key ?? ''),
+      },
+    });
+  }
 
   console.log('Upload completed successfully!');
   console.log('Install your app from:');

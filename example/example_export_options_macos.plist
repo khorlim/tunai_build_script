@@ -1,14 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Place a copy as macos/ExportOptions.plist in your Flutter app.
-  Replace TEAM_ID with your Apple Developer Team ID.
-  signingStyle automatic matches Xcode "Automatically manage signing".
+  Copy to macos/ExportOptions.plist in your Flutter app. Set teamID to your Apple Developer Team ID.
+
+  If export fails with "No signing certificate Mac App Distribution found":
+  - Open macos/Runner.xcworkspace in Xcode → Runner target → Signing & Capabilities →
+    Release: Team = same teamID as here, "Automatically manage signing" ON.
+  - Xcode → Settings → Accounts → your Apple ID → Manage Certificates… → + →
+    create an "Apple Distribution" (or "Mac App Distribution") certificate if missing.
+  - Or developer.apple.com → Certificates → create Mac App Distribution / Apple Distribution.
+
+  method: app-store-connect (avoid deprecated app-store in recent Xcode).
 -->
 <plist version="1.0">
 <dict>
 	<key>method</key>
-	<string>app-store</string>
+	<string>app-store-connect</string>
 	<key>signingStyle</key>
 	<string>automatic</string>
 	<key>teamID</key>

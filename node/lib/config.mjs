@@ -41,6 +41,31 @@ export function getApphostSection(config) {
 }
 
 /** @param {ReturnType<typeof loadConfigFile>} config */
+export function getLoadlySection(config) {
+  const l = config?.loadly;
+  if (!l || typeof l !== 'object') return null;
+  const apiKey = l.api_key?.trim();
+  if (!apiKey) return null;
+  const t = l.timeout_seconds;
+  const timeoutSeconds =
+    typeof t === 'number' && t >= 60 && t <= 1800 ? t : 600;
+  return {
+    api_key: apiKey,
+    build_password: l.build_password?.trim() || undefined,
+    build_update_description:
+      typeof l.build_update_description === 'string'
+        ? l.build_update_description
+        : undefined,
+    build_install_type:
+      typeof l.build_install_type === 'number'
+        ? l.build_install_type
+        : undefined,
+    build_channel_shortcut: l.build_channel_shortcut?.trim() || undefined,
+    timeout_seconds: timeoutSeconds,
+  };
+}
+
+/** @param {ReturnType<typeof loadConfigFile>} config */
 export function getTelegramSection(config) {
   const t = config?.telegram;
   if (!t || typeof t !== 'object') return null;

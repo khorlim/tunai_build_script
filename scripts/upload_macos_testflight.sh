@@ -15,10 +15,17 @@
 #
 # Required files:
 #   macos/ExportOptions.plist — use example/example_export_options_macos.plist as a template
-#     (method app-store, signingStyle automatic, your teamID).
-#   tunai-build-script --platform macos can set SCHEME / EXPORT_PLIST from tunai_build_script_config.json.
+#     (method app-store-connect recommended; signingStyle automatic, your teamID).
+#   tunai-build-script --platform macos reads tunai_build_script_config.json → macos_testflight and
+#     exports SCHEME, EXPORT_PLIST, ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH.
 #
-# Upload auth (pick one):
+# Upload auth (config preferred when using tunai-build-script):
+#   In tunai_build_script_config.json → macos_testflight:
+#     app_store_key_json_path — JSON with key_id, issuer_id, key (PEM), optional duration, in_house
+#       (see example/app_store_connect_api_key.example.json). ${ENV} substitution applies in that file.
+#   Or legacy fields: api_key_id, api_issuer_id, api_private_key_path (.p8 path).
+#
+# Or set environment variables yourself:
 #   export ASC_API_KEY_ID=...
 #   export ASC_API_ISSUER_ID=...
 #   export API_PRIVATE_KEYS_DIR=/path/to/dir   # dir contains AuthKey_<KEY_ID>.p8
@@ -113,6 +120,7 @@ xcodebuild \
   -configuration Release \
   -destination "generic/platform=macOS" \
   -archivePath "$ARCHIVE_PATH" \
+  -allowProvisioningUpdates \
   CODE_SIGN_STYLE=Automatic \
   archive
 
@@ -124,12 +132,13 @@ xcodebuild \
   -exportArchive \
   -archivePath "$ARCHIVE_PATH" \
   -exportPath "$EXPORT_DIR" \
-  -exportOptionsPlist "$EXPORT_PLIST"
+  -exportOptionsPlist "$EXPORT_PLIST" \
+  -allowProvisioningUpdates
 
 PKG_FILE=$(find "$EXPORT_DIR" -maxdepth 1 -name "*.pkg" -print -quit || true)
 if [[ -z "$PKG_FILE" ]]; then
   echo "Error: No .pkg found under $EXPORT_DIR after export." >&2
-  echo "Check macos/ExportOptions.plist (method should be app-store for Mac App Store / TestFlight)." >&2
+  echo "Check macos/ExportOptions.plist (method should be app-store-connect; teamID must match your Apple team)." >&2
   exit 1
 fi
 
@@ -141,12 +150,12 @@ if [[ "$BUILD_ONLY" == true ]]; then
 fi
 
 if [[ -z "${ASC_API_KEY_ID:-}" || -z "${ASC_API_ISSUER_ID:-}" ]]; then
-  echo "Error: Set ASC_API_KEY_ID and ASC_API_ISSUER_ID for upload, or pass --build-only." >&2
+  echo "Error: Set ASC_API_KEY_ID and ASC_API_ISSUER_ID (e.g. macos_testflight.app_store_key_json_path or api_* in tunai_build_script_config.json), or pass --build-only." >&2
   exit 1
 fi
 
 if [[ -z "${API_PRIVATE_KEYS_DIR:-}" ]]; then
-  echo "Error: Set API_PRIVATE_KEYS_DIR (directory containing AuthKey_${ASC_API_KEY_ID}.p8) or ASC_API_KEY_PATH." >&2
+  echo "Error: Set macos_testflight.app_store_key_json_path, or api_private_key_path, or ASC_API_KEY_PATH / API_PRIVATE_KEYS_DIR (AuthKey_${ASC_API_KEY_ID}.p8)." >&2
   exit 1
 fi
 

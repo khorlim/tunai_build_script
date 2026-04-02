@@ -18,7 +18,7 @@ function usage() {
   (needs pubspec.yaml) or --platform macos (needs macos/ or --project-root).
 
 Options:
-  --platform ios|android|macos   iOS/Android: apphost build & upload. macos: TestFlight script.
+  --platform ios|android|macos   iOS/Android: build & upload (apphost or Loadly via config). macos: TestFlight script.
   --bump-version <type> [ver]   major | minor | patch | build | manual (manual needs e.g. 1.2.3+5)
   --upload                      Upload only (iOS/Android), no build
   --no-update                   Skip git pull, submodule update, flutter pub get (iOS/Android)
@@ -220,7 +220,7 @@ function validateNoMix(args, mode) {
   if (mode === 'macos') {
     if (args.uploadOnly) {
       console.error(
-        'Error: --upload (apphost) applies only to iOS/Android, not macOS TestFlight',
+        'Error: --upload (iOS/Android distribution) applies only to iOS/Android, not macOS TestFlight',
       );
       process.exit(1);
     }

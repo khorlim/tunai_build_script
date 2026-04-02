@@ -1,4 +1,11 @@
 {
+  "upload": {
+    "provider": "apphost",
+    "changelog_path": null
+  },
+  "loadly": {
+    "api_key": "your_loadly_api_key"
+  },
   "apphost": {
     "user_id": "your_user_id",
     "app_id": "your_app_id",
@@ -14,11 +21,9 @@
   "ios": {
     "export_options_plist": "ios/ExportOptions.plist"
   },
-  "upload": {
-    "changelog_path": null
-  },
   "macos_testflight": {
     "scheme": "Runner",
-    "export_plist": "macos/ExportOptions.plist"
+    "export_plist": "macos/ExportOptions.plist",
+    "app_store_key_json_path": "path/to/app_store_connect_api_key.json"
   }
 }
