@@ -14,36 +14,33 @@ const BUMP_TYPES = new Set(['major', 'minor', 'patch', 'build', 'manual']);
 function usage() {
   console.log(`Usage: tunai-build-script [options]
 
-  Looks for ${CONFIG_FILENAME} in cwd or a parent (except pure --bump-version / --platform macos
-  may resolve the app via pubspec.yaml or macos/ alone).
+  Config: ${CONFIG_FILENAME} is resolved from cwd or a parent. Not required for --bump-version
+  (needs pubspec.yaml) or --platform macos (needs macos/ or --project-root).
 
-iOS / Android (apphost upload)
+Options:
+  --platform ios|android|macos   iOS/Android: apphost build & upload. macos: TestFlight script.
+  --bump-version <type> [ver]   major | minor | patch | build | manual (manual needs e.g. 1.2.3+5)
+  --upload                      Upload only (iOS/Android), no build
+  --no-update                   Skip git pull, submodule update, flutter pub get (iOS/Android)
+  --upload-changelog <path>     Relative path; overrides config upload.changelog_path
+  --build-only                  With --platform macos: archive/export only, no altool upload
+  --repo-update                 With --platform macos: pod install --repo-update
+  --yes                         With --bump-version: bump build number without prompting
+  --no-bump-build               With --bump-version: never bump build (non-TTY default for patch/minor/major)
+  --project-root <dir>          Flutter app root
+  --topic-id <id>               Telegram forum thread (overrides config / TELEGRAM_TOPIC_ID)
+  --test-telegram               Send a test Telegram message (needs config + telegram.*)
+  --test-upload-file <path>     Send a file via Telegram (path relative to project root)
+  -h, -help, --help             Show this help
+
+Examples:
   tunai-build-script
-  tunai-build-script --platform ios|android
-  tunai-build-script --upload
-  tunai-build-script --no-update
+  tunai-build-script --platform ios --no-update
+  tunai-build-script --upload --platform android
   tunai-build-script --upload-changelog CHANGELOG.md
-
-macOS TestFlight (Xcode archive + scripts/upload_macos_testflight.sh)
-  tunai-build-script --platform macos
   tunai-build-script --platform macos --build-only
-  tunai-build-script --platform macos --repo-update
-
-Version bump (pubspec + native metadata)
   tunai-build-script --bump-version patch
-  tunai-build-script --bump-version manual 1.2.3+5
-  tunai-build-script --bump-version major --yes
-  tunai-build-script --bump-version minor --no-bump-build
-
-Telegram tests
-  tunai-build-script --test-telegram
-  tunai-build-script --test-upload-file <path>
-
-Global options (where applicable)
-  --project-root <dir>
-  --topic-id <id>
-
-  -h, -help, --help        Show this help
+  tunai-build-script --bump-version manual 1.2.3+5 --project-root /path/to/app
 `);
 }
 
