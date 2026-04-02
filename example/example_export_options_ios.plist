@@ -1,20 +1,16 @@
-ExportOptions.plist place under ios/
-
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Copy to ios/ExportOptions.plist in your Flutter app for `flutter build ipa`.
+  Replace YOUR_TEAM_ID with your Apple Developer Team ID.
+-->
 <plist version="1.0">
 <dict>
-	<key>destination</key>
-	<string>export</string>
 	<key>method</key>
-	<string>release-testing</string>
+	<string>app-store</string>
 	<key>signingStyle</key>
 	<string>automatic</string>
-	<key>stripSwiftSymbols</key>
-	<true/>
 	<key>teamID</key>
-	<string>U3B25U6JVG</string>
-	<key>thinning</key>
-	<string>&lt;none&gt;</string>
+	<string>YOUR_TEAM_ID</string>
 </dict>
 </plist>

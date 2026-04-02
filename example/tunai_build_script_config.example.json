@@ -1,0 +1,24 @@
+{
+  "apphost": {
+    "user_id": "your_user_id",
+    "app_id": "your_app_id",
+    "key": "your_key",
+    "ios_bundle_identifier": "com.example.app",
+    "android_package_name": "com.example.app"
+  },
+  "telegram": {
+    "bot_token": "${TELEGRAM_BOT_TOKEN}",
+    "chat_id": "${TELEGRAM_CHAT_ID}",
+    "topic_id": ""
+  },
+  "ios": {
+    "export_options_plist": "ios/ExportOptions.plist"
+  },
+  "upload": {
+    "changelog_path": null
+  },
+  "macos_testflight": {
+    "scheme": "Runner",
+    "export_plist": "macos/ExportOptions.plist"
+  }
+}
