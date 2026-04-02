@@ -24,6 +24,7 @@ npx tunai-build-script -help
 Update after install
 ```bash
 npm update tunai-build-script
+npm install -D git+https://github.com/khorlim/tunai_build_script.git
 ```
 
 After install, the **`tunai-build-script`** command is on your `PATH` (global) or in `node_modules/.bin` (local).

@@ -95,8 +95,13 @@ echo "==> App directory: $APP_DIR"
 echo "==> flutter pub get"
 ( cd "$APP_DIR" && flutter pub get )
 
-echo "==> pod install (macos)${POD_REPO_UPDATE[*]:+ with --repo-update}"
-( cd "$MACOS_DIR" && pod install "${POD_REPO_UPDATE[@]}" )
+if ((${#POD_REPO_UPDATE[@]} > 0)); then
+  echo "==> pod install (macos) with --repo-update"
+  ( cd "$MACOS_DIR" && pod install "${POD_REPO_UPDATE[@]}" )
+else
+  echo "==> pod install (macos)"
+  ( cd "$MACOS_DIR" && pod install )
+fi
 
 mkdir -p "$BUILD_ROOT"
 
