@@ -38,8 +38,8 @@ Options:
 Changelog (must be the first argument; needs git on PATH):
   tunai-build-script --generate-changelog [changelog-options]
 
-  Writes changelog.md (engineering git log) and changelog_tester.md (tester sections from
-  squash bodies, optional GitHub PR fetch). Options:
+  Writes changelog.md (engineering git log) and changelog_tester.md (full commit or PR text per
+  change; optional gh pr view when body empty and subject has (#N)). Options:
   --from <rev>           Start revision (tag, branch, SHA, or HEAD)
   --to <rev>             End revision
   --output, -o <path>    Engineering changelog (default: changelog.md)

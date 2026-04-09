@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
  * Generate changelog.md (engineering) and changelog_tester.md from git history.
- * Tester doc reads `### User Visible Changes` and `### Risk Level` from squash/PR bodies.
- * Tester PR bodies: by default uses **GitHub CLI** (`gh pr view`) when `gh auth login` is OK;
+ * Tester doc: full squash commit body per change; if the body is empty and the subject has `(#N)`, loads the full PR body via **GitHub CLI** (`gh pr view`) when `gh auth login` is OK;
  * if `gh` is missing or not logged in, logs a warning and skips PR fetch. Use **--no-fetch-github-pr** to skip network entirely.
  * Submodules use that submodule's `git remote get-url origin`. Requires git on PATH.
  *
@@ -203,8 +202,7 @@ export async function getFormattedLogCommits(
 const H3 = /^###\s*(.+?)\s*$/;
 
 /**
- * Pull `### User Visible Changes` and `### Risk Level` blocks from a squash/PR body (case-insensitive titles).
- * Stops each block at the next `###` heading. Other `###` sections in the body are skipped for extraction.
+ * Extract `### User Visible Changes` and `### Risk Level` blocks (case-insensitive). Not used for tester changelog output (that uses the full body); kept for callers who want structured fields.
  * @param {string} body
  * @returns {{ userVisible: string | null, riskLevel: string | null }}
  */
@@ -692,33 +690,24 @@ async function loadMainRepositoryCommits(projectRoot, fromTag, toTag) {
 /**
  * @param {string[]} commitBlocks
  * @param {string[]} out
- * @param {{ missingContext?: string, gitCwd: string, github?: GithubFetchContext | null, fetchExplicitlyDisabled?: boolean }} [opts]
+ * @param {{ gitCwd: string, github?: GithubFetchContext | null }} [opts]
  */
 async function appendTesterEntriesForCommitsAsync(commitBlocks, out, opts = {}) {
-  /** @type {{ shortSha: string, subject: string, userVisible: string | null, riskLevel: string | null, prDescriptionFallback: string | null }[]} */
-  const withNotes = [];
-  /** @type {{ shortSha: string, subject: string }[]} */
-  const without = [];
-
   const gh = opts.github;
   const gitCwd = opts.gitCwd;
-  const fetchAttempted = Boolean(gh?.fetchPr);
-  const fetchExplicitlyDisabled = Boolean(opts.fetchExplicitlyDisabled);
 
   for (const block of commitBlocks) {
     const { shortSha, subject, body } = splitCommitBlock(block);
-    let { userVisible, riskLevel } = extractPrTesterSections(body);
-    /** @type {string | null} */
-    let prDescriptionFallback = null;
+    let description = body.trim();
 
-    if (!userVisible && !riskLevel && gh?.fetchPr) {
+    if (!description && gh?.fetchPr) {
       const prNum = extractPrNumberFromSubject(subject);
       if (prNum != null) {
         const ownerRepo =
           gh.repoOverride ?? parseGithubRepoFromRemoteUrl(await getGitOriginUrl(gitCwd));
         if (!ownerRepo) {
           gh.warn(
-            `Could not parse github.com from origin in ${gitCwd}; skipping PR #${prNum} (${opts.missingContext ?? 'repo'})`,
+            `Could not parse github.com from origin in ${gitCwd}; skipping PR #${prNum}`,
           );
         } else {
           const cacheKey = `${ownerRepo.owner}/${ownerRepo.repo}#${prNum}`;
@@ -732,14 +721,7 @@ async function appendTesterEntriesForCommitsAsync(commitBlocks, out, opts = {}) 
             gh.cache.set(cacheKey, fetched);
           }
           if (fetched.ok) {
-            const prBody = fetched.body || '';
-            const fromPr = extractPrTesterSections(prBody);
-            if (fromPr.userVisible || fromPr.riskLevel) {
-              userVisible = fromPr.userVisible;
-              riskLevel = fromPr.riskLevel;
-            } else if (prBody.trim()) {
-              prDescriptionFallback = prBody.trim();
-            }
+            description = (fetched.body || '').trim();
           } else {
             gh.warn(
               `${ownerRepo.owner}/${ownerRepo.repo} PR #${prNum}: ${fetched.error}`,
@@ -749,87 +731,17 @@ async function appendTesterEntriesForCommitsAsync(commitBlocks, out, opts = {}) 
       }
     }
 
-    if (userVisible || riskLevel || prDescriptionFallback) {
-      withNotes.push({
-        shortSha,
-        subject,
-        userVisible,
-        riskLevel,
-        prDescriptionFallback,
-      });
-    } else {
-      without.push({ shortSha, subject });
-    }
-  }
-
-  for (const e of withNotes) {
-    const title = e.shortSha ? `${e.shortSha} — ${e.subject}` : e.subject;
+    const title = shortSha ? `${shortSha} — ${subject}` : subject;
     out.push(`#### ${title}`, '');
-    if (e.userVisible) {
-      out.push('**User visible changes**', '', e.userVisible, '');
-    }
-    if (e.riskLevel) {
-      out.push('**Risk level**', '', e.riskLevel, '');
-    }
-    if (e.prDescriptionFallback && !e.userVisible && !e.riskLevel) {
-      out.push('**PR description (GitHub)**', '', e.prDescriptionFallback, '');
+    if (description) {
+      out.push(description, '');
     }
     out.push('');
-  }
-
-  if (without.length > 0) {
-    const h = opts.missingContext ? '####' : '###';
-    const ctx = opts.missingContext ? ` — ${opts.missingContext}` : '';
-
-    /** @type {{ shortSha: string, subject: string }[]} */
-    const withPrInSubject = [];
-    /** @type {{ shortSha: string, subject: string }[]} */
-    const noPrInSubject = [];
-    for (const e of without) {
-      if (extractPrNumberFromSubject(e.subject) != null) {
-        withPrInSubject.push(e);
-      } else {
-        noPrInSubject.push(e);
-      }
-    }
-
-    const bullet = (e) => {
-      const head = e.shortSha ? `${e.shortSha} — ${e.subject}` : e.subject;
-      out.push(`- ${head}`);
-    };
-
-    if (withPrInSubject.length > 0) {
-      out.push(`${h} PR linked in subject but not in tester output${ctx}`, '');
-      let explain;
-      if (fetchExplicitlyDisabled) {
-        explain =
-          '*These subjects include `(#number)` but PR fetch was disabled (**--no-fetch-github-pr**). Remove that flag or add `### User Visible Changes` / `### Risk Level` to the squash body.*';
-      } else if (fetchAttempted) {
-        explain =
-          '*PR was fetched (or attempted) but the body had no `### User Visible Changes` / `### Risk Level`, the PR description was empty, or GitHub returned an error — see warnings above. You can still use the engineering changelog.*';
-      } else {
-        explain =
-          '*These subjects include `(#number)` but PR descriptions were not loaded — **GitHub CLI** was missing, not logged in (`gh auth login`), or skipped. See the warning above.*';
-      }
-      out.push(explain, '');
-      for (const e of withPrInSubject) bullet(e);
-      out.push('');
-    }
-
-    if (noPrInSubject.length > 0) {
-      out.push(`${h} No PR number in subject${ctx}`, '');
-      out.push(
-        '*No `(#number)` in the squash subject and no tester sections in the commit body — nothing to match on GitHub. Use the engineering changelog or ask the author to add `(#N)` or template sections.*',
-        '',
-      );
-      for (const e of noPrInSubject) bullet(e);
-      out.push('');
-    }
   }
 }
 
 /**
- * Tester-facing changelog: uses `### User Visible Changes` and `### Risk Level` from squash/PR bodies.
+ * Tester-facing changelog: full squash commit body, or full GitHub PR body when the commit body is empty and `(#N)` is in the subject.
  * @param {string} projectRoot
  * @param {string} fromTag
  * @param {string} toTag
@@ -851,7 +763,6 @@ export async function generateTesterChangelogMarkdown(
 
   const flag = options.fetchGithubPr;
   const wantFetch = flag !== false;
-  const fetchExplicitlyDisabled = flag === false;
   const repoOverrideParsed = options.githubRepo
     ? parseGithubRepoArg(options.githubRepo)
     : null;
@@ -901,13 +812,7 @@ export async function generateTesterChangelogMarkdown(
     `**Date:** ${dateString}`,
     `**From:** ${fromDisplay} **To:** ${toDisplay}`,
     '',
-    '*Built from squash merge bodies. Expected sections: `### User Visible Changes`, `### Risk Level` (headings are matched case-insensitively).*',
   );
-  if (wantFetch) {
-    out.push(
-      '*PR bodies load via **GitHub CLI** (`gh pr view`) when the subject contains `(#123)` and the commit body has no tester sections, if `gh auth login` succeeded. Use **--no-fetch-github-pr** to skip. Repo = each checkout’s `origin` (submodules use the submodule remote).*',
-    );
-  }
   out.push('');
 
   const { mainCommits, mainLogErr } = await loadMainRepositoryCommits(
@@ -927,10 +832,8 @@ export async function generateTesterChangelogMarkdown(
     out.push('*(Could not list commits.)*', '');
   } else if (mainCommits.length > 0) {
     await appendTesterEntriesForCommitsAsync(mainCommits, out, {
-      missingContext: 'main app',
       gitCwd: projectRoot,
       github,
-      fetchExplicitlyDisabled,
     });
   } else {
     out.push('*(no changes)*', '');
@@ -953,10 +856,8 @@ export async function generateTesterChangelogMarkdown(
         );
         if (d.commits.length > 0) {
           await appendTesterEntriesForCommitsAsync(d.commits, out, {
-            missingContext: `${d.name} (${d.subPath})`,
             gitCwd: path.join(projectRoot, d.subPath),
             github,
-            fetchExplicitlyDisabled,
           });
         } else {
           out.push('*(no commit list)*', '');
@@ -1160,13 +1061,7 @@ function parseCliArgs(argv) {
 function usage() {
   console.log(`Usage: generate-changelog.mjs [options] [fromRev] [toRev]
 
-Writes changelog.md (full git log) and changelog_tester.md (PR sections from squash bodies).
-
-Squash/merge commit body should include:
-  ### User Visible Changes
-  …
-  ### Risk Level
-  …
+Writes changelog.md (full git log) and changelog_tester.md (full squash/PR description per commit).
 
 Options:
   --from <rev>           Start revision (tag, branch, SHA, or HEAD)
