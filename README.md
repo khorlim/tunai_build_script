@@ -1,6 +1,6 @@
 # tunai-build-script
 
-Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/) or [Loadly](https://loadly.io/)), optional **Telegram** notifications, **version bump** (`--bump-version`), and **macOS TestFlight** (`--platform macos`, via the bundled shell script).
+Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/) or [Loadly](https://loadly.io/)), optional **Telegram** notifications, **version bump** (`--bump-version`), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering + tester markdown from git).
 
 Configuration lives in a single file at the **Flutter app root**: `tunai_build_script_config.json`.
 
@@ -60,9 +60,35 @@ tunai-build-script --bump-version major --yes
 tunai-build-script --platform macos
 tunai-build-script --platform macos --build-only
 tunai-build-script --platform macos --repo-update --project-root /path/to/app
+
+# Changelog (git on PATH; must be first argument)
+tunai-build-script --generate-changelog
+tunai-build-script --generate-changelog v1.0.0 HEAD
+tunai-build-script --generate-changelog --from v1.0.0 --to HEAD -o CHANGELOG.release.md
+tunai-build-script --generate-changelog --git-root . --no-tester
 ```
 
 Run **`tunai-build-script -help`** for the full option list.
+
+### Changelog generation (`--generate-changelog`)
+
+Use **`tunai-build-script --generate-changelog`** as the **first** argument; everything after it is passed to the bundled generator (same behavior as `node node/lib/generate-changelog.mjs` in this repo).
+
+| Output | Default path | Content |
+|--------|----------------|--------|
+| Engineering | `changelog.md` | Main repo + submodule commits (`--output` / `-o` to override) |
+| Tester | `changelog_tester.md` | `### User Visible Changes` and `### Risk Level` from squash/merge bodies (`--tester-output` to override; `--no-tester` to skip) |
+
+Discovery: walks up for **`pubspec.yaml`** unless you pass **`--project-root`** or **`--git-root`** (plain git repo, no Flutter). Range: **`--from`** / **`--to`** or two positionals; non-interactive default from is latest tag or `HEAD`, to is `HEAD`. **`--strict`** fails the run if the main repo `git log` errors.
+
+Squash/merge bodies should include:
+
+```text
+### User Visible Changes
+…
+### Risk Level
+…
+```
 
 **macOS TestFlight** uses `scripts/upload_macos_testflight.sh` (Xcode, CocoaPods). Prefer **`macos_testflight`** in `tunai_build_script_config.json` for API key JSON or legacy `ASC_*` paths; the CLI exports them for the script. See script header comments for env-only setup.
 

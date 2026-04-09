@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import fs from 'fs';
 import path from 'path';
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 import { findProjectWithConfig, CONFIG_FILENAME } from '../lib/find-project.mjs';
 import { loadConfigFile, getTelegramSection } from '../lib/config.mjs';
 import { detectPlatform } from '../lib/platform-detect.mjs';
@@ -15,7 +17,7 @@ function usage() {
   console.log(`Usage: tunai-build-script [options]
 
   Config: ${CONFIG_FILENAME} is resolved from cwd or a parent. Not required for --bump-version
-  (needs pubspec.yaml) or --platform macos (needs macos/ or --project-root).
+  (needs pubspec.yaml), --platform macos (needs macos/ or --project-root), or --generate-changelog.
 
 Options:
   --platform ios|android|macos   iOS/Android: build & upload (apphost or Loadly via config). macos: TestFlight script.
@@ -33,6 +35,23 @@ Options:
   --test-upload-file <path>     Send a file via Telegram (path relative to project root)
   -h, -help, --help             Show this help
 
+Changelog files (must be the first argument; needs git on PATH):
+  tunai-build-script --generate-changelog [changelog-options]
+
+  Writes changelog.md (engineering git log) and changelog_tester.md (squash bodies:
+  "### User Visible Changes", "### Risk Level"). Options:
+  --from <rev>           Start revision (tag, branch, SHA, or HEAD)
+  --to <rev>             End revision
+  --output, -o <path>    Engineering changelog (default: changelog.md)
+  --tester-output <path> Tester changelog (default: changelog_tester.md)
+  --no-tester            Skip changelog_tester.md
+  --project-root <dir>   Flutter root (default: discover pubspec.yaml)
+  --git-root <dir>       Git repo only, no pubspec required
+  --strict               Exit with error if main repo git log fails
+  [fromRev] [toRev]      Positional range (same as --from / --to)
+
+  Interactive TTY: prompts for missing from/to. Non-interactive: from defaults to latest tag or HEAD; to defaults to HEAD.
+
 Examples:
   tunai-build-script
   tunai-build-script --platform ios --no-update
@@ -41,7 +60,30 @@ Examples:
   tunai-build-script --platform macos --build-only
   tunai-build-script --bump-version patch
   tunai-build-script --bump-version manual 1.2.3+5 --project-root /path/to/app
+  tunai-build-script --generate-changelog
+  tunai-build-script --generate-changelog v1.0.0 HEAD
+  tunai-build-script --generate-changelog --from v1.0.0 -o release-notes.md
 `);
+}
+
+/**
+ * @param {string[]} changelogArgv arguments after --generate-changelog
+ * @returns {Promise<number>} exit code
+ */
+function runGenerateChangelogCli(changelogArgv) {
+  const scriptPath = fileURLToPath(
+    new URL('../lib/generate-changelog.mjs', import.meta.url),
+  );
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [scriptPath, ...changelogArgv], {
+      stdio: 'inherit',
+      cwd: process.cwd(),
+    });
+    child.on('error', reject);
+    child.on('close', (code, signal) => {
+      resolve(signal ? 1 : code ?? 1);
+    });
+  });
 }
 
 function parseArgs(argv) {
@@ -238,7 +280,14 @@ function validateNoMix(args, mode) {
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv[0] === '--generate-changelog') {
+    const code = await runGenerateChangelogCli(argv.slice(1));
+    process.exit(code);
+    return;
+  }
+
+  const args = parseArgs(argv);
   if (args.help) {
     usage();
     return;
