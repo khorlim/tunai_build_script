@@ -2,7 +2,9 @@
 /**
  * Generate changelog.md (engineering) and changelog_tester.md from git history.
  * Tester doc reads `### User Visible Changes` and `### Risk Level` from squash/PR bodies.
- * No AI / external APIs. Requires git on PATH.
+ * Optional: with `--fetch-github-pr`, loads PR bodies when the commit body is empty but the
+ * subject contains `(#123)`: uses `GITHUB_TOKEN` / `GH_TOKEN` + REST API if set, else `gh pr view`.
+ * Submodules use that submodule's `git remote get-url origin`. Requires git on PATH.
  *
  * Usage:
  *   node node/lib/generate-changelog.mjs [fromRev] [toRev]
@@ -46,6 +48,42 @@ function runGit(cwd, args) {
       stderr += chunk;
     });
     child.on('error', reject);
+    child.on('close', (code, signal) => {
+      resolve({ code: signal ? 1 : code ?? 1, stdout, stderr });
+    });
+  });
+}
+
+/**
+ * @param {string | null} cwd
+ * @param {string} command
+ * @param {string[]} args
+ * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+ */
+function runProcess(cwd, command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: cwd ?? undefined,
+      shell: false,
+      env: process.env,
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    child.on('error', (err) => {
+      resolve({
+        code: 127,
+        stdout: '',
+        stderr: String(err?.message ?? err),
+      });
+    });
     child.on('close', (code, signal) => {
       resolve({ code: signal ? 1 : code ?? 1, stdout, stderr });
     });
@@ -217,6 +255,143 @@ export function splitCommitBlock(commitBlock) {
   const subject = m ? m[2].trim() : firstLine;
   const body = lines.slice(1).join('\n').trim();
   return { shortSha, subject, firstLine, body };
+}
+
+/**
+ * GitHub squash titles often end with `(#46)`.
+ * @param {string} subject
+ * @returns {number | null}
+ */
+export function extractPrNumberFromSubject(subject) {
+  const m = subject.match(/\(#(\d+)\)\s*$/);
+  if (m) return parseInt(m[1], 10);
+  const m2 = subject.match(/\(#(\d+)\)/);
+  if (m2) return parseInt(m2[1], 10);
+  return null;
+}
+
+/**
+ * @param {string} url output of `git remote get-url origin`
+ * @returns {{ owner: string, repo: string } | null}
+ */
+export function parseGithubRepoFromRemoteUrl(url) {
+  if (!url?.trim()) return null;
+  const u = url.trim();
+  const scp = u.match(/^git@github\.com:([^/]+)\/([^/.]+?)(?:\.git)?$/i);
+  if (scp) return { owner: scp[1], repo: scp[2] };
+  const https = u.match(
+    /^https?:\/\/(?:[^@/]+\@)?github\.com\/([^/]+)\/([^/.]+?)(?:\.git)?(?:\/|$)/i,
+  );
+  if (https) return { owner: https[1], repo: https[2] };
+  return null;
+}
+
+/**
+ * @param {string} s `owner/repo`
+ * @returns {{ owner: string, repo: string } | null}
+ */
+export function parseGithubRepoArg(s) {
+  const m = String(s).trim().match(/^([^/]+)\/([^/]+)$/);
+  if (!m) return null;
+  return { owner: m[1], repo: m[2].replace(/\.git$/i, '') };
+}
+
+/**
+ * @param {string} cwd repo root (main app or submodule)
+ * @returns {Promise<string | null>}
+ */
+async function getGitOriginUrl(cwd) {
+  const r = await runGit(cwd, ['remote', 'get-url', 'origin']);
+  if (r.code !== 0) return null;
+  const u = r.stdout.trim();
+  return u || null;
+}
+
+/**
+ * @param {string} owner
+ * @param {string} repo
+ * @param {number} pullNumber
+ * @param {string} token
+ * @returns {Promise<{ ok: true, body: string } | { ok: false, error: string }>}
+ */
+export async function fetchGithubPullBody(owner, repo, pullNumber, token) {
+  const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${pullNumber}`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'tunai-build-script-generate-changelog',
+      },
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: `${res.status} ${text.slice(0, 240)}`,
+      };
+    }
+    const data = JSON.parse(text);
+    const body = typeof data.body === 'string' ? data.body : '';
+    return { ok: true, body };
+  } catch (e) {
+    return { ok: false, error: String(e?.message ?? e) };
+  }
+}
+
+/**
+ * Uses GitHub CLI (`gh pr view`). Respects `gh auth login` and GH_HOST for Enterprise.
+ * @param {string} owner
+ * @param {string} repo
+ * @param {number} pullNumber
+ * @returns {Promise<{ ok: true, body: string } | { ok: false, error: string }>}
+ */
+export async function fetchGithubPullBodyViaGh(owner, repo, pullNumber) {
+  const repoSpec = `${owner}/${repo}`;
+  const args = [
+    'pr',
+    'view',
+    String(pullNumber),
+    '--repo',
+    repoSpec,
+    '--json',
+    'body',
+  ];
+  const r = await runProcess(null, 'gh', args);
+  if (r.code !== 0) {
+    const hint =
+      r.stderr.includes('executable') || r.stderr.includes('ENOENT')
+        ? ' (install GitHub CLI or set GITHUB_TOKEN / GH_TOKEN)'
+        : '';
+    return {
+      ok: false,
+      error: `${(r.stderr || r.stdout).trim() || `exit ${r.code}`}${hint}`,
+    };
+  }
+  try {
+    const data = JSON.parse(r.stdout);
+    const body =
+      data.body === null || data.body === undefined ? '' : String(data.body);
+    return { ok: true, body };
+  } catch {
+    return { ok: false, error: 'gh returned invalid JSON' };
+  }
+}
+
+/**
+ * Prefers REST + token when set; otherwise `gh pr view`.
+ * @param {string} owner
+ * @param {string} repo
+ * @param {number} pullNumber
+ * @param {string | null | undefined} token
+ */
+export async function fetchPullRequestBody(owner, repo, pullNumber, token) {
+  const t = token?.trim();
+  if (t) {
+    return fetchGithubPullBody(owner, repo, pullNumber, t);
+  }
+  return fetchGithubPullBodyViaGh(owner, repo, pullNumber);
 }
 
 /**
@@ -537,21 +712,76 @@ async function loadMainRepositoryCommits(projectRoot, fromTag, toTag) {
 }
 
 /**
+ * @typedef {{ fetchPr: boolean, token: string | null, repoOverride: { owner: string, repo: string } | null, cache: Map<string, Awaited<ReturnType<typeof fetchPullRequestBody>>>, warn: (msg: string) => void }} GithubFetchContext
+ */
+
+/**
  * @param {string[]} commitBlocks
  * @param {string[]} out
- * @param {{ missingContext?: string }} [opts]
+ * @param {{ missingContext?: string, gitCwd: string, github?: GithubFetchContext | null }} [opts]
  */
-function appendTesterEntriesForCommits(commitBlocks, out, opts = {}) {
-  /** @type {{ shortSha: string, subject: string, userVisible: string | null, riskLevel: string | null }[]} */
+async function appendTesterEntriesForCommitsAsync(commitBlocks, out, opts = {}) {
+  /** @type {{ shortSha: string, subject: string, userVisible: string | null, riskLevel: string | null, prDescriptionFallback: string | null }[]} */
   const withNotes = [];
   /** @type {{ shortSha: string, subject: string }[]} */
   const without = [];
 
+  const gh = opts.github;
+  const gitCwd = opts.gitCwd;
+
   for (const block of commitBlocks) {
     const { shortSha, subject, body } = splitCommitBlock(block);
-    const { userVisible, riskLevel } = extractPrTesterSections(body);
-    if (userVisible || riskLevel) {
-      withNotes.push({ shortSha, subject, userVisible, riskLevel });
+    let { userVisible, riskLevel } = extractPrTesterSections(body);
+    /** @type {string | null} */
+    let prDescriptionFallback = null;
+
+    if (!userVisible && !riskLevel && gh?.fetchPr) {
+      const prNum = extractPrNumberFromSubject(subject);
+      if (prNum != null) {
+        const ownerRepo =
+          gh.repoOverride ?? parseGithubRepoFromRemoteUrl(await getGitOriginUrl(gitCwd));
+        if (!ownerRepo) {
+          gh.warn(
+            `Could not parse github.com from origin in ${gitCwd}; skipping PR #${prNum} (${opts.missingContext ?? 'repo'})`,
+          );
+        } else {
+          const cacheKey = `${ownerRepo.owner}/${ownerRepo.repo}#${prNum}`;
+          let fetched = gh.cache.get(cacheKey);
+          if (!fetched) {
+            fetched = await fetchPullRequestBody(
+              ownerRepo.owner,
+              ownerRepo.repo,
+              prNum,
+              gh.token,
+            );
+            gh.cache.set(cacheKey, fetched);
+          }
+          if (fetched.ok) {
+            const prBody = fetched.body || '';
+            const fromPr = extractPrTesterSections(prBody);
+            if (fromPr.userVisible || fromPr.riskLevel) {
+              userVisible = fromPr.userVisible;
+              riskLevel = fromPr.riskLevel;
+            } else if (prBody.trim()) {
+              prDescriptionFallback = prBody.trim();
+            }
+          } else {
+            gh.warn(
+              `${ownerRepo.owner}/${ownerRepo.repo} PR #${prNum}: ${fetched.error}`,
+            );
+          }
+        }
+      }
+    }
+
+    if (userVisible || riskLevel || prDescriptionFallback) {
+      withNotes.push({
+        shortSha,
+        subject,
+        userVisible,
+        riskLevel,
+        prDescriptionFallback,
+      });
     } else {
       without.push({ shortSha, subject });
     }
@@ -566,6 +796,9 @@ function appendTesterEntriesForCommits(commitBlocks, out, opts = {}) {
     if (e.riskLevel) {
       out.push('**Risk level**', '', e.riskLevel, '');
     }
+    if (e.prDescriptionFallback && !e.userVisible && !e.riskLevel) {
+      out.push('**PR description (GitHub)**', '', e.prDescriptionFallback, '');
+    }
     out.push('');
   }
 
@@ -575,7 +808,7 @@ function appendTesterEntriesForCommits(commitBlocks, out, opts = {}) {
       : '### Missing PR tester sections';
     out.push(heading, '');
     out.push(
-      '*No `### User Visible Changes` or `### Risk Level` in the commit body (squash description). Use the engineering changelog or ask the author.*',
+      '*No tester sections in the commit body, no `(#number)` in the subject for GitHub lookup, or PR fetch failed. Use the engineering changelog or ask the author.*',
       '',
     );
     for (const e of without) {
@@ -591,7 +824,7 @@ function appendTesterEntriesForCommits(commitBlocks, out, opts = {}) {
  * @param {string} projectRoot
  * @param {string} fromTag
  * @param {string} toTag
- * @param {{ strictMainLog?: boolean, onGitWarning?: (msg: string) => void }} [options]
+ * @param {{ strictMainLog?: boolean, onGitWarning?: (msg: string) => void, fetchGithubPr?: boolean, githubRepo?: string | null, githubToken?: string | null }} [options]
  * @returns {Promise<{ markdown: string, warnings: string[] }>}
  */
 export async function generateTesterChangelogMarkdown(
@@ -605,6 +838,34 @@ export async function generateTesterChangelogMarkdown(
     warnings.push(msg);
     options.onGitWarning?.(msg);
   };
+
+  const tokenRaw =
+    options.githubToken ??
+    process.env.GITHUB_TOKEN ??
+    process.env.GH_TOKEN ??
+    '';
+  const token = tokenRaw.trim() || null;
+  const wantFetch = Boolean(options.fetchGithubPr);
+  const fetchWorks = wantFetch;
+  const repoOverrideParsed = options.githubRepo
+    ? parseGithubRepoArg(options.githubRepo)
+    : null;
+  if (options.githubRepo && !repoOverrideParsed) {
+    warn(
+      `Invalid --github-repo "${options.githubRepo}" (expected owner/repo); ignoring override`,
+    );
+  }
+
+  /** @type {GithubFetchContext | null} */
+  const github = fetchWorks
+    ? {
+        fetchPr: true,
+        token,
+        repoOverride: repoOverrideParsed,
+        cache: new Map(),
+        warn,
+      }
+    : null;
 
   const now = new Date();
   const { version, dateString } = await getReleaseVersionAndDate(
@@ -629,8 +890,13 @@ export async function generateTesterChangelogMarkdown(
     `**From:** ${fromDisplay} **To:** ${toDisplay}`,
     '',
     '*Built from squash merge bodies. Expected sections: `### User Visible Changes`, `### Risk Level` (headings are matched case-insensitively).*',
-    '',
   );
+  if (fetchWorks) {
+    out.push(
+      '*With `--fetch-github-pr`, PR bodies load when the subject contains `(#123)` and the commit body has no tester sections. Uses `GITHUB_TOKEN` / `GH_TOKEN` + api.github.com if set; otherwise `gh pr view` (GitHub CLI, `gh auth login`). Repo = each checkout’s `origin` (submodules use the submodule remote).*',
+    );
+  }
+  out.push('');
 
   const { mainCommits, mainLogErr } = await loadMainRepositoryCommits(
     projectRoot,
@@ -648,8 +914,10 @@ export async function generateTesterChangelogMarkdown(
     }
     out.push('*(Could not list commits.)*', '');
   } else if (mainCommits.length > 0) {
-    appendTesterEntriesForCommits(mainCommits, out, {
+    await appendTesterEntriesForCommitsAsync(mainCommits, out, {
       missingContext: 'main app',
+      gitCwd: projectRoot,
+      github,
     });
   } else {
     out.push('*(no changes)*', '');
@@ -671,8 +939,10 @@ export async function generateTesterChangelogMarkdown(
           '',
         );
         if (d.commits.length > 0) {
-          appendTesterEntriesForCommits(d.commits, out, {
+          await appendTesterEntriesForCommitsAsync(d.commits, out, {
             missingContext: `${d.name} (${d.subPath})`,
+            gitCwd: path.join(projectRoot, d.subPath),
+            github,
           });
         } else {
           out.push('*(no commit list)*', '');
@@ -815,6 +1085,8 @@ function parseCliArgs(argv) {
     output: null,
     testerOutput: null,
     noTester: false,
+    fetchGithubPr: false,
+    githubRepo: null,
     from: null,
     to: null,
     strict: false,
@@ -831,7 +1103,8 @@ function parseCliArgs(argv) {
       a === '-o' ||
       a === '--tester-output' ||
       a === '--from' ||
-      a === '--to'
+      a === '--to' ||
+      a === '--github-repo'
     ) {
       const v = argv[++i];
       if (v === undefined) {
@@ -846,8 +1119,11 @@ function parseCliArgs(argv) {
       else if (a === '--tester-output') out.testerOutput = v;
       else if (a === '--from') out.from = v;
       else if (a === '--to') out.to = v;
+      else if (a === '--github-repo') out.githubRepo = v;
     } else if (a === '--no-tester') {
       out.noTester = true;
+    } else if (a === '--fetch-github-pr') {
+      out.fetchGithubPr = true;
     } else if (a === '--strict') {
       out.strict = true;
     } else if (a.startsWith('-')) {
@@ -883,8 +1159,13 @@ Options:
   --no-tester            Skip changelog_tester.md
   --project-root <dir>   Flutter app root (default: discover pubspec.yaml)
   --git-root <dir>       Git repo root (no pubspec required; overrides discovery)
+  --fetch-github-pr      Fill tester doc from GitHub PR body when subject has (#123) and commit body is empty
+  --github-repo org/repo github.com owner/repo for the main app (if origin is not github.com)
   --strict               Exit with error if main repo git log fails
   -h, --help             Show this help
+
+  With --fetch-github-pr: REST + token if GITHUB_TOKEN/GH_TOKEN set; else gh pr view.
+  Submodules use that submodule's origin URL (github.com, or GH_HOST for Enterprise with gh).
 
 Interactive (TTY): prompts for missing from/to (defaults: last tag → HEAD).
 Non-interactive: missing from defaults to latest tag or HEAD; missing to defaults to HEAD.
@@ -892,6 +1173,8 @@ Non-interactive: missing from defaults to latest tag or HEAD; missing to default
 Examples:
   node node/lib/generate-changelog.mjs v1.0.0 HEAD
   node node/lib/generate-changelog.mjs --from v1.0.0 --output release-notes.md
+  GITHUB_TOKEN=ghp_xxx node node/lib/generate-changelog.mjs --fetch-github-pr v1.0.0 HEAD
+  node node/lib/generate-changelog.mjs --fetch-github-pr v1.0.0 HEAD   # uses gh if no token
 `);
 }
 
@@ -1025,13 +1308,26 @@ async function main() {
   console.log(`Wrote ${outPath}`);
 
   if (!args.noTester) {
+    if (
+      args.fetchGithubPr &&
+      !process.env.GITHUB_TOKEN?.trim() &&
+      !process.env.GH_TOKEN?.trim()
+    ) {
+      console.warn(
+        'Note: no GITHUB_TOKEN/GH_TOKEN — PR bodies will be loaded via `gh pr view` if the GitHub CLI is installed and authenticated (`gh auth status`).',
+      );
+    }
     let testerResult;
     try {
       testerResult = await generateTesterChangelogMarkdown(
         projectRoot,
         finalFrom,
         finalTo,
-        genOpts,
+        {
+          ...genOpts,
+          fetchGithubPr: args.fetchGithubPr,
+          githubRepo: args.githubRepo,
+        },
       );
     } catch (e) {
       console.error(String(e?.message ?? e));

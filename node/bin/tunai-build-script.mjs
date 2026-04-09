@@ -35,20 +35,25 @@ Options:
   --test-upload-file <path>     Send a file via Telegram (path relative to project root)
   -h, -help, --help             Show this help
 
-Changelog files (must be the first argument; needs git on PATH):
+Changelog (must be the first argument; needs git on PATH):
   tunai-build-script --generate-changelog [changelog-options]
 
-  Writes changelog.md (engineering git log) and changelog_tester.md (squash bodies:
-  "### User Visible Changes", "### Risk Level"). Options:
+  Writes changelog.md (engineering git log) and changelog_tester.md (tester sections from
+  squash bodies, optional GitHub PR fetch). Options:
   --from <rev>           Start revision (tag, branch, SHA, or HEAD)
   --to <rev>             End revision
   --output, -o <path>    Engineering changelog (default: changelog.md)
   --tester-output <path> Tester changelog (default: changelog_tester.md)
   --no-tester            Skip changelog_tester.md
+  --fetch-github-pr      Load PR body when subject has (#123) and commit body lacks sections
+  --github-repo org/repo Main app GitHub owner/repo if origin is not github.com
   --project-root <dir>   Flutter root (default: discover pubspec.yaml)
   --git-root <dir>       Git repo only, no pubspec required
   --strict               Exit with error if main repo git log fails
   [fromRev] [toRev]      Positional range (same as --from / --to)
+
+  PR fetch: GITHUB_TOKEN or GH_TOKEN uses the REST API; otherwise gh pr view (gh auth login).
+  Submodules use each submodule origin URL.
 
   Interactive TTY: prompts for missing from/to. Non-interactive: from defaults to latest tag or HEAD; to defaults to HEAD.
 
@@ -63,6 +68,7 @@ Examples:
   tunai-build-script --generate-changelog
   tunai-build-script --generate-changelog v1.0.0 HEAD
   tunai-build-script --generate-changelog --from v1.0.0 -o release-notes.md
+  tunai-build-script --generate-changelog --fetch-github-pr v1.0.0 HEAD
 `);
 }
 

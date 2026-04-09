@@ -61,27 +61,31 @@ tunai-build-script --platform macos
 tunai-build-script --platform macos --build-only
 tunai-build-script --platform macos --repo-update --project-root /path/to/app
 
-# Changelog (git on PATH; must be first argument)
+# Changelog (git on PATH; --generate-changelog must be first)
 tunai-build-script --generate-changelog
 tunai-build-script --generate-changelog v1.0.0 HEAD
 tunai-build-script --generate-changelog --from v1.0.0 --to HEAD -o CHANGELOG.release.md
 tunai-build-script --generate-changelog --git-root . --no-tester
+tunai-build-script --generate-changelog --fetch-github-pr v1.0.0 HEAD
+GITHUB_TOKEN=ghp_xxx tunai-build-script --generate-changelog --fetch-github-pr v1.0.0 HEAD
 ```
 
 Run **`tunai-build-script -help`** for the full option list.
 
 ### Changelog generation (`--generate-changelog`)
 
-Use **`tunai-build-script --generate-changelog`** as the **first** argument; everything after it is passed to the bundled generator (same behavior as `node node/lib/generate-changelog.mjs` in this repo).
+Use **`tunai-build-script --generate-changelog`** as the **first** argument; everything after it is passed to the bundled generator (same as `node node/lib/generate-changelog.mjs` in this repo).
 
 | Output | Default path | Content |
 |--------|----------------|--------|
 | Engineering | `changelog.md` | Main repo + submodule commits (`--output` / `-o` to override) |
-| Tester | `changelog_tester.md` | `### User Visible Changes` and `### Risk Level` from squash/merge bodies (`--tester-output` to override; `--no-tester` to skip) |
+| Tester | `changelog_tester.md` | Same `###` sections from **squash/merge commit bodies**; optional GitHub PR fetch (see below) (`--tester-output`; `--no-tester` to skip) |
 
-Discovery: walks up for **`pubspec.yaml`** unless you pass **`--project-root`** or **`--git-root`** (plain git repo, no Flutter). Range: **`--from`** / **`--to`** or two positionals; non-interactive default from is latest tag or `HEAD`, to is `HEAD`. **`--strict`** fails the run if the main repo `git log` errors.
+Discovery: walks up for **`pubspec.yaml`** unless you pass **`--project-root`** or **`--git-root`**. Range: **`--from`** / **`--to`** or two positionals; non-interactive defaults: from = latest tag or `HEAD`, to = `HEAD`. **`--strict`** fails if the main repo `git log` errors.
 
-Squash/merge bodies should include:
+**PR descriptions when the squash body is empty:** If the commit **subject** includes GitHub’s **`(#123)`** but the git body has no tester sections, **`--fetch-github-pr`** loads the PR description and reuses the same `###` headings (or prints the full PR body under **PR description (GitHub)**). Resolution order: **`GITHUB_TOKEN`** or **`GH_TOKEN`** → REST API; if neither is set → **`gh pr view`** (install [GitHub CLI](https://cli.github.com/), run `gh auth login`). Each repo’s **`origin`** must be a `github.com` URL (submodules: that submodule’s remote). Use **`--github-repo owner/repo`** only for the **main** app when `origin` is not standard GitHub. For GitHub Enterprise with `gh`, set **`GH_HOST`** as usual.
+
+Squash/merge bodies (or PR descriptions when fetched) should include:
 
 ```text
 ### User Visible Changes
