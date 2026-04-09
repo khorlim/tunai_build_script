@@ -1,71 +1,12 @@
-# Tester changelog
+# Tester changelog (PRs)
 
 ## Release v1.0.176+36
-**Date:** 2026-04-09 12:44:35
+**Date:** 2026-04-09 12:55:54
 **From:** test-v1.0.175+33 **To:** 4073631c
-
 
 ## Main app
 
-#### a80cf69c — Update submodule references for data, member_module, and setting_module
-
-
-#### 8697b9f3 — Prepare release test-v1.0.176+36
-
-
-#### 932c82d1 — update modules
-
-
-#### cfad1ea5 — update modules and trans
-
-
-#### 0945e6d3 — Prepare release test-v1.0.176+35
-
-
-#### adaca3f9 — Add new translation strings for yearly, reset time, and next time in English, Malay, and Chinese; update translation metadata.
-
-
-#### d2394652 — update submodules
-
-
-#### 6e142aa5 — update skills
-
-
-#### e7a6ab64 — Update release metadata for version 1.0.176+34, add new translation strings for 'combo' and 'example' in English, Malay, and Chinese, and update asset submodule reference.
-
-
-#### d4c66b2a — update pr creator skill
-
-
-#### 91a22a89 — Prepare release test-v1.0.176+34
-
-
-#### 1dbfbc7d — Add new translation strings for numbering, appearance, display, display setting, and receipt display setting in English, Malay, and Chinese; update member voucher screen layout with additional spacing.
-
-
-#### fbdf2883 — Update submodule references for data, history_module, inventory_module, and setting_module
-
-
-#### c041162e — Update submodule references for data, tunai_style, and appt_module
-
-
-#### 25db06ee — Update translation strings for outlet permissions and restore manual top-up and view quotation entries in English, Malay, and Chinese; update asset submodule reference.
-
-
-#### 80ccc6d0 — update skill
-
-
-#### 74cf5ef1 — Add new translation strings for delivery settings and reasons in English, Malay, and Chinese
-
-
-#### 0aac38a1 — Update submodule references for asset, history_module, report_module, and setting_module
-
-
-#### 004409c1 — Update Podfile.lock with new dependency checksums and versions
-
-
-#### 39ad2082 — Update submodule references and dependencies in pubspec.lock and pubspec.yaml
-
+*(No PR-linked commits in this range. Squash subjects must include `(#number)`.)*
 
 ## Submodules
 
@@ -74,32 +15,46 @@
 **Path:** lib/general_module/appt_module
 **From:** 1767714 **To:** 4d43ad3
 
-#### 4d43ad3 — feat/recurring-series-edit-scope (#38)
+### PR #38 — feat/recurring-series-edit-scope
 
-* feat: support recurring series edit scope for appointments
-* fix: requested changes from kudin
-* styling
+### Changes
+- Added recurring series edit scope model and comparison logic for appointment edits.
+- Updated edit/create appointment flows to support saving one occurrence or the entire recurring series.
+- Added recurring-series related UI components and list screen updates to reflect scoped edits.
 
+### User Visible Changes
+- Users can choose how recurring appointment edits are applied (single occurrence vs entire series).
+- Appointment form and appointment list behavior now reflect recurring-series update choices.
 
-#### 9c0377d — style: task styling
+### Risk Level
+- Medium: touches core appointment edit/create flows and recurring appointment behavior across multiple screens.
 
-
-#### 13164bc — style: update rotate staff icon
-
-
-#### 3cba5d3 — feat/staff-task-view-2-and-spa-task-ui (#37)
-
-* feat: staff task view v2, task forms, and spa task UI updates
-Made-with: Cursor
-* only show rotate staff on task detail
+Made with [Cursor](https://cursor.com)
 
 
-#### 50ad700 — chore: remove unused
+### PR #37 — feat/staff-task-view-2-and-spa-task-ui
+
+### Changes
+- Add staff task view v2 with cubit state, round tile widget, and integration in task main and related spa task widgets.
+- Update task forms (task form, task form widget, add task dialog), task box layout and grid, staff task box, room task timer, room history task appt box, and appt main cubit plus appt time sheet appt box for consistency with the new staff task UI.
+
+### User Visible Changes
+- Updated spa staff task experience, task form options, and related appointment time sheet or task presentation.
+
+### Risk Level
+Medium — new UI path and form wiring across multiple screens; regression-test spa task main, add task, and time sheet flows.
+
+Made with [Cursor](https://cursor.com)
 
 
-#### 9b9cb46 — refactor: remove unused num_extension imports and replace sizedBox with TunaiSpace in various widgets (#35)
+### PR #35 — refactor: remove unused num_extension imports and replace sizedBox with TunaiSpace in various widgets
 
+### Internal Changes
 - add support for other outlet appt for ApptBox
+- remove unused num_extension imports and replace sizedBox with TunaiSpace in various widgets
+
+### Risk Level
+Low
 
 
 ### member_module
@@ -107,20 +62,34 @@ Made-with: Cursor
 **Path:** lib/general_module/member_module
 **From:** cea6dda **To:** 0207741
 
-#### 02077413 — refactor: improve layout and spacing in MemberDocumentTile widget
+### PR #46 — feat: enhance appointment handling and UI adjustments in member appointment screens
 
-
-#### 01297410 — feat: enhance appointment handling and UI adjustments in member appointment screens (#46)
-
+### Internal Changes
 - support shared appt for member view
+- enhance appointment handling and UI adjustments in member appointment screens
+
+### Risk Level
+Low
 
 
-#### 7cf390a8 — refactor: extract voucher detail into section widgets (#50)
+### PR #50 — refactor/voucher-detail-section-widgets
 
-Made-with: Cursor
+### Changes
+
+Split voucher detail UI into dedicated widgets under voucher_detail/widget: header tile, status section, sale section, and info section. Simplified voucher_detail_screen.dart layout and wiring. Minor voucher_list_screen.dart updates aligned with the detail flow.
+
+### User Visible Changes
+
+None expected; layout and behavior should match the previous voucher detail and list screens.
+
+### Risk Level
+
+Low: refactor with extracted widgets only; regression risk is limited to voucher detail and list screens.
+
+Made with [Cursor](https://cursor.com)
 
 
-#### 1f455915 — TUNAI-527: add member address editor UI flow (#49)
+### PR #49 — TUNAI-527/feat/member-address-management
 
 ### Changes
 - Add member address editor dialog flow in member profile screen.
@@ -136,7 +105,7 @@ Made-with: Cursor
 Made with [Cursor](https://cursor.com)
 
 
-#### 5e9c851c — refactor: enhance voucher detail screen layout and styling with context-aware colors and consistent padding (#48)
+### PR #48 — refactor: enhance voucher detail screen layout and styling with context-aware colors and consistent padding
 
 ### Internal Changes
 - enhance voucher detail screen layout and styling with context-aware colors and consistent padding
@@ -150,24 +119,26 @@ Low
 **Path:** lib/general_module/history_module
 **From:** 4c21fc7 **To:** 4c34f3c
 
-#### 4c34f3c — Feature/order_otem_remark (#57)
+### PR #57 — Feature/order_otem_remark
 
-* feat: add remark display in OrderCompletedContent for enhanced user feedback
-- Implemented a new feature to display remarks in the OrderCompletedContent widget when available, improving user experience by providing additional context.
-- Introduced a helper method, _buildRemark, to format and present the remark alongside an icon, ensuring a consistent visual style.
-* refactor: enhance OrderCompletedContent functionality and code clarity
+### Internal Changes
 - Introduced a helper method, _skuFromCompletedDetail, to streamline SKU handling in OrderCompletedContent.
-- Refactored the showVoidedDialog method to a static context for better encapsulation.
 - Simplified the grouping logic in groupByGroupID and improved readability by using putIfAbsent.
 - Cleaned up unused code and improved variable naming for clarity.
-- Updated widget build methods for consistency and maintainability.
+
+### Risk Level
+Low
 
 
-#### 61a5d97 — refactor: update member repository references and improve UI consistency in customer and staff content pages (#54)
+### PR #54 — refactor: update member repository references and improve UI consistency in customer and staff content pages
 
+### Internal Changes
 - Replaced SmallMemberRepo with MemberRepo in NewHistoryMain and NewHistoryCubit for better repository management.
 - Enhanced MemberInfoRow usage in CustomerDetailsPage and CustomerContentPage for improved clarity.
 - Adjusted spacing and layout in StaffContentPage to ensure consistent presentation across different device types.
+
+### Risk Level
+Low
 
 
 ### setting_module
@@ -175,105 +146,54 @@ Low
 **Path:** lib/general_module/setting_module
 **From:** 1433c36 **To:** 775e60d
 
-#### 775e60d4 — Chore/translation_cleanup (#194)
+### PR #194 — Chore/translation_cleanup
 
-* feat: enhance receipt settings UI with new title field and improved layout
-- Added a new TunaiTextFieldTile for customizing the document title in the receipt settings.
-- Updated section headers for clarity, changing "configuration" to "appearance" and adding a new "payment" section.
-- Removed several TunaiSwitchTile components to streamline the UI and improve user experience.
-* fix: update URL in BrandPage to point to development environment
-- Changed the URL in BrandPage from production to development for testing purposes.
-- Updated the displayed URL in the UI to reflect the new development link.
-* fix: update URL in BrandPage and enhance receipt settings dialog
-- Changed the URL in BrandPage to point to the booking environment.
-- Refactored receipt number type selection to use a dialog for improved user experience.
-- Made the save button in the receipt display settings dialog conditional based on the ability to save.
-* refactor: improve code readability and localization in receipt dialogs
-- Reformatted the updateReceiptConf call for better readability in ReceiptAdvanceContent.
+### Internal Changes
 - Changed the variable dividerIndent to final for clarity in ReceiptDisplaySettingDialog.
 - Updated text references in ReceiptNumberTypeDialog to use localized strings for reset times and next time information, enhancing internationalization support.
 
-
-#### 77da7695 — Feature/uploadable_experiment (#192)
-
-* feat: add new data control upload functionality and related UI components
-* refactor: update import paths and enhance CSV header for supplier SKU upload functionality
-* feat: add SkuSectionFolderUploadDialog and integrate with upload menu
-* feat: enhance upload dialog with pause/resume functionality and progress display
-- Added pause and resume buttons to the upload dialog, allowing users to control the upload process.
-- Implemented progress tracking in the upload dialog, displaying current progress and percentage.
-- Refactored upload state management to improve responsiveness and user experience.
-- Updated error handling for supplier SKU upload to ensure safe parsing of update IDs.
-* feat: add member remarks upload functionality and improve error handling
-- Introduced a new upload menu item for member remarks in the data control screen, linking it to the MemberRemarkUploadManager and associated dialog.
-- Enhanced the MemberUploadDialog to format mobile numbers correctly and improved error messages for better clarity.
-- Updated the SupplierSkuUploadDialog to enforce data format validation, ensuring the number of columns is within expected limits and providing clearer error feedback.
-* refactor: reorganize upload dialog imports and enhance upload menu items
-- Updated import paths for upload-related classes to reflect the new directory structure, improving code organization.
-- Expanded the upload menu items in the NewDataControlScreen to include additional upload functionalities for various member-related data, enhancing the upload capabilities of the application.
-- Adjusted the uploadManager type in UploadMenuItem to be more flexible, accommodating different upload scenarios.
-* feat: enhance upload functionality in NewDataControlScreen
-- Added new upload menu items for various data types including service duration, package vouchers, SKU updates, and custom menu items, expanding the upload capabilities of the application.
-- Updated import statements to include new upload managers and dialogs, improving code organization and maintainability.
-- Enhanced the user interface by integrating additional upload options, allowing for a more comprehensive data management experience.
-* feat: add custom font support in member document upload
-- Integrated NotoSansSC-Regular.ttf font into the UploadMemberDocument class for enhanced text styling in PDF generation.
-- Updated text style in the PDF document to utilize the new font, improving the visual presentation of uploaded member documents.
-* feat: add delete member vouchers upload functionality
-- Introduced a new upload menu item for deleting member vouchers in the NewDataControlScreen, linked to the VoucherDeleteUploadManager and associated dialog.
-- Updated import statements to include the new voucher delete upload manager and dialog, enhancing the upload capabilities of the application.
-* refactor: update SKU upload dialog to use section and folder names
-- Replaced sectionID and folderID with section name and folder name in the SkuServiceCsvUploadDialog for improved clarity and usability.
-- Removed unused imports and section/folder fetching logic to streamline the upload process and enhance code maintainability.
-* refactor: streamline SKU upload dialogs by replacing IDs with names
-- Updated SkuPackageCsvUploadDialog and SkuProductCsvUploadDialog to use section and folder names instead of IDs for improved clarity.
-- Removed unused imports and eliminated unnecessary fetching of sections and folders, enhancing code maintainability and simplifying the upload process.
-* refactor: enhance upload dialogs with numeric validation and formatting
-- Updated various upload dialogs to utilize UploadCsvNumeric for parsing and validating numeric fields, ensuring non-negative values for credits, points, and prices.
-- Improved mobile number formatting and error handling across member-related upload dialogs for better data integrity and user experience.
-- Removed redundant parsing logic and streamlined the upload process, enhancing code maintainability.
-* refactor: consolidate upload settings by removing obsolete dialogs and enhancing data control screen
-- Deleted unused upload dialogs for deleting car members, members, pets, SKUs, and updating member details, streamlining the upload process.
-- Updated the data control screen to include new upload managers for various member-related functionalities, improving code organization and maintainability.
-- Enhanced import statements to reflect the removal of deprecated files and the addition of new upload managers.
-* refactor: reorganize upload dialogs and enhance data control service
-- Removed obsolete upload dialog files for various member-related functionalities, including appointment, custom menu items, and member details, to streamline the upload process.
-- Updated import statements to reflect the new structure and improve code organization.
-- Enhanced the DataControlExportService by consolidating repository initializations, improving maintainability and clarity.
-* refactor: enhance data control screen layout and padding
-- Updated the padding of the SingleChildScrollView to include bottom padding based on the device's bottom safe area, improving layout responsiveness.
+### Risk Level
+Low
 
 
-#### 99ffbdf6 — Revamp/receipt_setting (#193)
+### PR #192 — Feature/uploadable_experiment
 
-* feat: enhance receipt settings UI with new title field and improved layout
-- Added a new TunaiTextFieldTile for customizing the document title in the receipt settings.
-- Updated section headers for clarity, changing "configuration" to "appearance" and adding a new "payment" section.
-- Removed several TunaiSwitchTile components to streamline the UI and improve user experience.
-* fix: update URL in BrandPage to point to development environment
-- Changed the URL in BrandPage from production to development for testing purposes.
-- Updated the displayed URL in the UI to reflect the new development link.
-* fix: update URL in BrandPage and enhance receipt settings dialog
-- Changed the URL in BrandPage to point to the booking environment.
-- Refactored receipt number type selection to use a dialog for improved user experience.
-- Made the save button in the receipt display settings dialog conditional based on the ability to save.
+### Internal Changes
+- Totally revamp DataControlScreen to use new uploadable format that supports background upload and progress indicator.
+- New engine, same interface
+
+### Risk Level
+Medium (each unit need to be tested by Kelvin)
 
 
-#### 924af28d — Chore/ui_standardise (#191)
+### PR #193 — Revamp/receipt_setting
 
-* style: adjust divider indentation in PermissionListWidget for improved layout
-* feat: integrate translation for no permissions message in PermissionListWidget
+### User Visible Changes
+- Refactored receipt number type selection and receipt display to use a dialog for improved user experience.
+- Refactored overall design of receipt advance page
+
+### Risk Level
+Low
+
+
+### PR #191 — Chore/ui_standardise
+
+### User visible changes
 - Added translation support for the "No Permissions Available" message, replacing it with a localized string for better user experience.
-- Wrapped the message in a Padding widget for improved layout consistency.
-* style: replace Padding with TunaiContainer in PermissionListWidget for improved layout
-- Updated the layout of the "No Outlet Permissions For Assignment" message by replacing the Padding widget with TunaiContainer for better styling.
-- Adjusted padding and background color to enhance visual consistency.
+- Put dividerIndent for TunaiListSection for better consistency
+
+### Risk Level
+Low
 
 
-#### 07a376a3 — refactor: streamline receipt setup fetching logic in ReceiptSetupRepo (#187)
+### PR #187 — refactor: streamline receipt setup fetching logic in ReceiptSetupRepo
 
+### Internal Changes
 - Simplified the fetch method to return a default ReceiptConf instance if the fetched receiptSetup is null, improving error handling.
 - Removed the explicit null check and exception throwing for a cleaner code structure.
+
+### Risk Level
+Low
 
 
 ### report_module
@@ -281,19 +201,18 @@ Low
 **Path:** lib/general_module/report_module
 **From:** 595dcd6 **To:** 058507c
 
-#### 058507c1 — feat: add recurringID in base appt
+### PR #66 — Feat/custom comm enhancement
+
+Description:
+### Internal Changes
+- Show Correlated Data in Custom Commission Data Details
+- Added Json Importer and Exporter for Comm Scheme
+
+### Risk Level
+Medium
 
 
-#### 5e38c9e1 — Feat/custom comm enhancement (#66)
-
-* Json Upload is Done
-* Better indicator of data
-
-
-#### 41ebe790 — Display Fix (#65)
-
-* Display Fix
-* COnssitent Patch for Deleted Member
+### PR #65 — Display Fix
 
 
 ### new_order_module
@@ -301,15 +220,20 @@ Low
 **Path:** lib/general_module/new_order_module
 **From:** 53b3242 **To:** ef70b9a
 
-#### ef70b9a — TUNAI-555: apply menu discount when creating otem (#63)
+### PR #63 — TUNAI-555/fix/apply-menu-discount-when-creating-otem
 
-Made-with: Cursor
+### Changes
+- Updated createOtem flow to derive applyDiscount from menu item discount when explicit discount is not provided.
+- Consolidated applyPrice and applyDiscount values and reused them for local state update and API calls.
+- Passed computed price and discount in redeem createOtem request to keep totals consistent.
 
+### User Visible Changes
+- Newly created order items now automatically apply menu discount pricing consistently.
 
-#### 55125e3 — fix: recalculate staff effort/hof when otem price change in walkin
+### Risk Level
+- Medium - affects order item pricing and discount values sent to create order item endpoints.
 
-
-#### b9a98f3 — feat: max staff length 4 for walk in
+Made with [Cursor](https://cursor.com)
 
 
 ### tunai_style
@@ -317,7 +241,7 @@ Made-with: Cursor
 **Path:** lib/tunai_style
 **From:** 6eedadf **To:** 1802967
 
-#### 1802967 — refactor: update GroupedDrawerItemButton height and alignment for improved layout (#117)
+### PR #117 — refactor: update GroupedDrawerItemButton height and alignment for improved layout
 
 ### Internal Changes
 - update GroupedDrawerItemButton height and alignment for improved layout
@@ -326,22 +250,37 @@ Made-with: Cursor
 Low
 
 
-#### f1493a7 — TUNAI-555: show menu discounted sku prices in row (#116)
+### PR #116 — TUNAI-555/feat/show-menu-discounted-sku-price
 
-Made-with: Cursor
+### Changes
+- Updated sku info row price rendering to compute outlet base price, menu discount, and final price.
+- Added discounted price presentation with strikethrough on original price when menu discount exists.
+- Normalized title spacing to TunaiSpacing.small to keep row spacing consistent.
+
+### User Visible Changes
+- SKU rows now show original and discounted prices when an item has menu discount.
+
+### Risk Level
+- Low - UI-only price display update based on existing sku pricing helpers.
+
+Made with [Cursor](https://cursor.com)
 
 
-#### 6af64ca — fix/sku-picker (#115)
+### PR #115 — fix/sku-picker
 
-* feat: hide sku section with empty skus
-* fix: sku sections disappear after drag to reorder
-* fix: hide restricted custom menus
+### Changes
+SKU picker and custom menu picker behavior: hide SKU sections that have no selectable SKUs; fix sections vanishing after drag-to-reorder; hide custom menu options that are restricted by menu rules (e.g. member rules) so users do not see invalid choices.
+
+### User Visible Changes
+Empty SKU groups stay collapsed or hidden where appropriate; reordering SKU sections no longer leaves sections missing; restricted custom menus no longer appear as selectable options in the picker.
+
+### Risk Level
+Medium. Touches picker visibility and ordering logic; regressions could hide valid options or affect layout after reorder.
+
+Made with [Cursor](https://cursor.com)
 
 
-#### e45967b — feat: max selected staff length for multi staff picker
-
-
-#### 1f02685 — feat: add onTap callback to DrawerItem and update GroupedDrawerItemButton to handle item selection (#114)
+### PR #114 — feat: add onTap callback to DrawerItem and update GroupedDrawerItemButton to handle item selection
 
 ### Internal Changes
 - add onTap callback to DrawerItem and update GroupedDrawerItemButton to handle item selection
@@ -350,10 +289,7 @@ Made-with: Cursor
 Low
 
 
-#### d19aba3 — fix: wrong on reorder logic
-
-
-#### 7ea0258 — Changes (#113)
+### PR #113 — Changes
 
 ### Internal Changes
 - Switch BaseFilter Widget to TunaiOptionMenu
@@ -367,57 +303,25 @@ Low
 **Path:** asset
 **From:** f67e33f **To:** 2e843b8
 
-#### 2e843b8 — trans
-
-
-#### 49ea88e — Add new translation strings for "yearly", "resetTime", and "nextTime" to English, Malay, and Chinese localization files to enhance user interface clarity.
-
-
-#### caa554e — Merge
-
-
-#### ebce444 — Add new translation strings "combo" and "example" to English, Malay, and Chinese localization files to enhance user interface clarity.
-
-
-#### a4909ab — trans
-
-
-#### 4c6bd73 — Add new translation strings "numbering", "appearance", "display", "displaySetting", and "receiptDisplaySetting" to English, Malay, and Chinese localization files to enhance user interface clarity.
-
-
-#### 94f37bd — Add new translation string "noOutletPermissionsForAssignment" to English, Malay, and Chinese localization files to enhance user interface clarity.
-
-
-#### 1f6dc21 — Add new translation string "reason" to English, Malay, and Chinese localization files to enhance user interface clarity.
-
-
-#### 2e6033f — Add usage descriptions for photo library access in Info.plist to inform users about image saving and selection features.
-
-
-#### 800b94b — Add new translation string "deliverySetting" to English, Malay, and Chinese localization files to enhance user interface clarity.
-
+*(No PR-linked commits in this range. Squash subjects must include `(#number)`.)*
 
 ### alan_report_module
 
 **Path:** lib/general_module/alan_report_module
 **From:** a9ac051 **To:** ecaab63
 
-#### ecaab63 — Feat-add-qtem-remarks (#155)
+### PR #155 — Feat-add-qtem-remarks
 
-* feat: add remarks field to Qtem model and related components
-- Introduced a new `remarks` field in the Qtem model to capture additional information.
-- Updated constructors, JSON parsing, and database handling to accommodate the new `remarks` field.
-- Enhanced UI components to display and edit remarks in various dialogs and forms.
-- Modified relevant cubits and services to handle remarks during quotation updates and item management.
-* feat: integrate selected staff handling in quotation item processing
+### Internal Changes
 - Added support for passing the selected staff to the quotation item dialog and order handler.
 - Enhanced order creation logic to utilize the selected staff for item processing, including staff-specific calculations for effort and handon.
 - Implemented a method to resolve staff details based on the selected staff, improving the robustness of staff management in quotations.
-* feat: enhance quotation PDF generation with remarks support
-- Updated the BasicQuotationPdf class to include remarks in item grouping and display.
-- Modified the QuotationPdfHandler to pass remarks when adding items to quotations.
-- Refactored the addQtemToQuotation method in QtemRepo to use named parameters for clarity.
-- Enhanced the ReceiptItemQuotation model to accommodate remarks, improving data handling in receipts.
+
+### User Visible Changes
+- Able to assign staff and qtem remark 
+
+### Risk Level 
+- Medium
 
 
 ### inventory_module
@@ -425,7 +329,7 @@ Low
 **Path:** lib/general_module/inventory_module
 **From:** v1.0.29 **To:** bbffacd
 
-#### bbffacd — refactor: enhance layout and spacing in StockDetailScreen and StockDetailSummaryWidget for improved visual consistency (#80)
+### PR #80 — refactor: enhance layout and spacing in StockDetailScreen and StockDetailSummaryWidget for improved visual consistency
 
 ### Internal Changes
 - enhance layout and spacing in StockDetailScreen and StockDetailSummaryWidget for improved visual consistency
@@ -434,7 +338,7 @@ Low
 Low
 
 
-#### c0d6faa — refactor: update titles in StockInScreen and StockActionDialog for improved clarity and consistency (#79)
+### PR #79 — refactor: update titles in StockInScreen and StockActionDialog for improved clarity and consistency
 
 ### User Visible Changes
 - update titles in StockInScreen and StockActionDialog from 'action' to 'reason' for improved clarity and consistency
@@ -448,17 +352,17 @@ Low
 **Path:** lib/data
 **From:** 7e2469c **To:** 008fa61
 
-#### 008fa61 — feat: enhance ReceiptNumberType with additional properties (#323)
+### PR #323 — feat: enhance ReceiptNumberType with additional properties
 
-* feat: enhance ReceiptNumberType with additional properties
+### Internal Changes
 - Added shortTitle getter for concise representation of receipt types.
 - Introduced isCombo, isDaily, isMonthly, and isYearly getters for better type classification.
-* feat: localize receipt titles in ReceiptNumberType
-- Replaced hardcoded receipt titles with localized strings using the translation file.
-- Updated title and shortTitle getters to utilize the new localization approach.
+
+### Risk Level
+Low
 
 
-#### eb593de — Changes (#325)
+### PR #325 — Changes
 
 ### Changes
 - Audit Repo pulls include hidden and. deleted member
@@ -467,7 +371,7 @@ Low
 - Small
 
 
-#### f1613cd — TUNAI-527: add member address type and detail data support (#324)
+### PR #324 — TUNAI-527/feat/member-address-management
 
 ### Changes
 - Extend member address domain models with additional fields needed by address type/details.
@@ -483,48 +387,36 @@ Low
 Made with [Cursor](https://cursor.com)
 
 
-#### e3133db — Feature/experimental (#321)
+### PR #321 — Feature/experimental
 
-* feat: implement uploadable data model with upload queue and supplier SKU handling
-* feat: update modelToMap method in SupplierSkuUpload and register outletRepo in ReportInitializer
-* feat: refactor Uploadable model and enhance upload queue management
-* feat: refactor uploadable system with new base classes and supplier SKU integration
-* feat: implement member and SKU upload functionality with status management
-* feat: add SKU section folder upload manager and database integration
-* feat: enhance upload manager with state management and progress tracking
-* feat: add member remark upload database and manager to uploadable initializer
-* refactor: remove deprecated member and SKU upload classes and services from the uploadable initializer
-* feat: add multiple SKU and related upload classes and managers to the uploadable initializer
-* feat: add custom font support for PDF generation in MemberDocumentCsvUploadService
-* feat: implement batch upload functionality in BaseUploadManager and BaseUploadService
-* feat: update SkuServiceCsvUpload to use sectionName and folderName, and integrate VoucherDeleteUploadDB
-* feat: refactor SkuPackageCsvUpload and SkuPackageCsvUploadService to use sectionName and folderName instead of sectionID and folderID
-* refactor: replace SmallMemberDBFetcher with BaseMemberMobileDBFetcher across multiple upload services to streamline member fetching process
-* feat: add new upload managers and databases for stock, supplier, staff, appointment, and rental item uploads
+### Internal Changes
+- Introduce Uploadable concept with their supporting cast; BaseUploadManager, BaseUploadService, UploadableDB and UploadableInitializer
+- Fully migrate DataControlScreen unit to their own Uploadable entity to support background loading, progress bar and improve state management
+
+### Risk Level
+Medium; each unit need to be tested by Kelvin
 
 
-#### 25c2241 — TUNAI-555: support menu item discount pricing in sku models (#322)
+### PR #322 — TUNAI-555/feat/support-menu-item-discount-pricing
 
-Made-with: Cursor
+### Changes
+- Added menuItem to Sku and wired copyWith and equality handling for nullable props.
+- Added menu item discount and final price helpers, and updated redeemable credit filtering to use final discounted price.
+- Preserved menu item info when composing sku from custom menu and aligned Equatable props nullability in related models.
 
+### User Visible Changes
+- Credit redeem and related sku pricing now respect custom menu item discount values.
 
-#### 499b895 — feat: fetch appt with recurring id
+### Risk Level
+- Medium - pricing and redeem eligibility logic changed and can affect order totals when custom menu discounts are applied.
 
-
-#### 9d334ee — feat: add recurring id when creating appt
-
-
-#### 3717ba0 — feat: add recurringID in base appt
-
-
-#### ba69db4 — feat: add helper isEligible getter for custom menu
-
-
-#### fa7dbe5 — refactor: enhance robustness of sku section sort
+Made with [Cursor](https://cursor.com)
 
 
-#### 5ef4a2a — refactor: simplify JSON parsing in BaseSale and related classes (#318)
+### PR #318 — refactor: simplify JSON parsing in BaseSale and related classes
 
+### Internal Changes
+- simplify JSON parsing in BaseSale and related classes
 - Updated BaseSale.fromJson to use default values for optional fields.
 - Refactored BigSale to directly use BaseSale.fromJson.
 - Removed deprecated BaseSaleDeltaFetcherConverter and related classes.
@@ -532,16 +424,45 @@ Made-with: Cursor
 - Cleaned up unused imports and classes across the sale module.
 - Introduce socket listener for SaleDetailRepo using key 'sale'
 
-
-#### dce4df7 — refactor: remove kick-off APIs, align appt group endpoints (#320)
-
-Made-with: Cursor
+### Risk Level
+High (touch sale, completed, collection)
 
 
-#### 215be44 — feat: staff working types, shift off-day in task staff, create task options (#319)
+### PR #320 — refactor/appt-kickoff-removal-and-api-updates
 
-Made-with: Cursor
+### Changes
+
+- Removed ApptKickOffUseCase registration from ApptInitializer and deleted startKickOff/stopKickOff from BaseApptRepo, BaseApptRemoteService, and BaseApptRemoteServiceImp2 (including spaloyalty kickoff URLs).
+- Updated ApptGroupIDRemoteService to call appt2.tunai.io for group generation and to read groupID from the top-level JSON response.
+- Removed the redundant _editAppt call block and the private _editAppt helper from BaseApptRemoteServiceImp2.
+- Changed the book group endpoint to use the configured apptUrl with the appts path instead of a hardcoded appt.tunai.io URL.
+
+### User Visible Changes
+
+Appointment group ID generation and group assignment now use the updated endpoints and response shape. Kick-off start/stop is no longer exposed from this data layer; any UI still calling removed APIs must be updated in the app modules.
+
+### Risk Level
+
+Medium — backend URL and response contract changes for group ID, plus removal of kick-off and the old inline edit path; verify group booking and any remaining kick-off flows against production or staging before release.
+
+Made with [Cursor](https://cursor.com)
+
+
+### PR #319 — feat/staff-shift-off-day-and-task-create-options
+
+### Changes
+- Add StaffWorkingType enum and a workingTypes getter on BaseStaff derived from showWork, showAppt, and showOnline flags.
+- Wire StaffShiftDetailRepo into TaskInitializer and TaskStaffUseCase: sync shift details with other task staff sync work, and exclude staff on default off-day shifts when building task staff lists.
+- CreateTaskUseCase: default new task start time to now plus five minutes; add rotateStaff flag on CreateTaskParams (default true) so rotate updates run only when requested.
+
+### User Visible Changes
+- Task creation timing and staff rotation behavior may differ from before; staff on off-day shift patterns can be hidden from task staff selection flows that use TaskStaffUseCase filtering.
+
+### Risk Level
+Medium — behavior changes to who appears in task staff lists and when staff rotate on create affect appointment and spa task workflows; verify with real shift data and create-task flows.
+
+Made with [Cursor](https://cursor.com)
 
 
 ---
-*Generated on 2026-04-09T04:44:35.556Z by generate-changelog.mjs (tester view)*
+*Generated on 2026-04-09T04:55:54.873Z by generate-changelog.mjs (tester PR view)*

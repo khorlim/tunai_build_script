@@ -83,6 +83,71 @@ export function stripPrMarkerFromSubject(subject) {
   return subject.replace(/\s*\(#\d+\)\s*$/u, '').trim();
 }
 
+const ATX_HEADING = /^(#{1,6})(\s.*)$/;
+
+/**
+ * Walk lines; `onLine(line, inFence)` called per line.
+ * @param {string} text
+ * @param {(line: string, inFence: boolean) => void} onLine
+ */
+function forEachLineRespectingFences(text, onLine) {
+  const lines = text.split('\n');
+  let inFence = false;
+  for (const line of lines) {
+    const t = line.trim();
+    if (t.startsWith('```')) {
+      onLine(line, inFence);
+      inFence = !inFence;
+      continue;
+    }
+    onLine(line, inFence);
+  }
+}
+
+/**
+ * Increase depth of ATX headings (`#` … `######`) so the shallowest heading is at least
+ * `minHeadingLevel`. Skips lines inside fenced code blocks. Caps at 6.
+ *
+ * @param {string} body
+ * @param {number} minHeadingLevel 1–6 (tester changelog uses 5 under `#### PR …` titles)
+ * @returns {string}
+ */
+export function demoteMarkdownHeadings(body, minHeadingLevel = 5) {
+  if (!body?.trim()) return body;
+  let shallowest = 7;
+  forEachLineRespectingFences(body, (line, inFence) => {
+    if (inFence) return;
+    const m = line.match(ATX_HEADING);
+    if (m) shallowest = Math.min(shallowest, m[1].length);
+  });
+  if (shallowest > 6) return body;
+  const delta = minHeadingLevel - shallowest;
+  if (delta <= 0) return body;
+  /** @type {string[]} */
+  const out = [];
+  let inFence = false;
+  for (const line of body.split('\n')) {
+    const t = line.trim();
+    if (t.startsWith('```')) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+    const m = line.match(ATX_HEADING);
+    if (m) {
+      const newLen = Math.min(6, m[1].length + delta);
+      out.push(`${'#'.repeat(newLen)}${m[2]}`);
+    } else {
+      out.push(line);
+    }
+  }
+  return out.join('\n');
+}
+
 /**
  * @param {string} url output of `git remote get-url origin`
  * @returns {{ owner: string, repo: string } | null}

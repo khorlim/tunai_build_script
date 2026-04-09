@@ -3,7 +3,7 @@
  * Generate changelog.md (engineering) and changelog_tester.md from git history.
  * Engineering log: full commit list. Tester doc: **PRs only** — grouped under **Main app** and each
  * **Submodule**; each entry is GitHub **PR title + description** (from `gh pr view` when available).
- * Only commits whose subject contains `(#N)` are included. Requires git on PATH; PR fetch uses **GitHub CLI**.
+ * Only commits whose subject contains `(#N)` are included. Requires git on PATH; PR fetch uses **GitHub CLI** with **parallel prefetch** (default 8 concurrent `gh pr view` calls).
  *
  * Usage:
  *   node node/lib/generate-changelog.mjs [fromRev] [toRev]
@@ -51,7 +51,10 @@ import {
   resolveChangelogRevisionLabels,
 } from './changelog/changelog-release.mjs';
 
-import { appendTesterPrOnlyEntriesAsync } from './changelog/changelog-tester-pr.mjs';
+import {
+  appendTesterPrOnlyEntriesAsync,
+  prefetchTesterPullMetadata,
+} from './changelog/changelog-tester-pr.mjs';
 
 export {
   parseFormattedLogOutput,
@@ -70,6 +73,7 @@ export {
   splitCommitBlock,
   extractPrNumberFromSubject,
   stripPrMarkerFromSubject,
+  demoteMarkdownHeadings,
   parseGithubRepoFromRemoteUrl,
   parseGithubRepoArg,
 } from './changelog/changelog-parse.mjs';
@@ -79,6 +83,9 @@ export {
   fetchGithubPullBodyViaGh,
   fetchGithubPullViaGh,
   getGitOriginUrl,
+  prefetchGithubPullJobs,
+  runPool,
+  DEFAULT_GH_PR_FETCH_CONCURRENCY,
 } from './changelog/changelog-github.mjs';
 
 export { getReleaseVersionAndDate, resolveChangelogRevisionLabels } from './changelog/changelog-release.mjs';
@@ -205,23 +212,31 @@ export async function generateTesterChangelogMarkdown(
         fetchPr: true,
         repoOverride: repoOverrideParsed,
         cache: new Map(),
+        originUrlCache: new Map(),
         warn,
       };
     }
   }
 
   const now = new Date();
-  const { version, dateString } = await getReleaseVersionAndDate(
-    projectRoot,
-    toTag,
-    now,
-  );
+  const [{ version, dateString }, { fromDisplay, toDisplay }, { mainCommits, mainLogErr }, deltas] =
+    await Promise.all([
+      getReleaseVersionAndDate(projectRoot, toTag, now),
+      resolveChangelogRevisionLabels(projectRoot, fromTag, toTag),
+      loadMainRepositoryCommits(projectRoot, fromTag, toTag),
+      getSubmoduleDeltas(projectRoot, fromTag, toTag, {
+        onGitWarning: warn,
+      }),
+    ]);
 
-  const { fromDisplay, toDisplay } = await resolveChangelogRevisionLabels(
-    projectRoot,
-    fromTag,
-    toTag,
-  );
+  if (github?.fetchPr) {
+    await prefetchTesterPullMetadata(
+      github,
+      projectRoot,
+      mainCommits,
+      deltas,
+    );
+  }
 
   /** @type {string[]} */
   const out = [];
@@ -229,15 +244,10 @@ export async function generateTesterChangelogMarkdown(
     '# Tester changelog (PRs)',
     '',
     `## Release ${version}`,
-    `**Date:** ${dateString}`,
-    `**From:** ${fromDisplay} **To:** ${toDisplay}`,
     '',
-  );
-
-  const { mainCommits, mainLogErr } = await loadMainRepositoryCommits(
-    projectRoot,
-    fromTag,
-    toTag,
+    `- **Date:** ${dateString}`,
+    `- **From:** \`${fromDisplay}\` → **To:** \`${toDisplay}\``,
+    '',
   );
 
   out.push('## Main app', '');
@@ -250,6 +260,7 @@ export async function generateTesterChangelogMarkdown(
     }
     out.push('*(Could not list commits.)*', '');
   } else if (mainCommits.length > 0) {
+    out.push('### Merged PRs', '');
     await appendTesterPrOnlyEntriesAsync(mainCommits, out, {
       gitCwd: projectRoot,
       github,
@@ -259,10 +270,6 @@ export async function generateTesterChangelogMarkdown(
     out.push('*(no changes)*', '');
   }
 
-  const deltas = await getSubmoduleDeltas(projectRoot, fromTag, toTag, {
-    onGitWarning: warn,
-  });
-
   if (deltas.length > 0) {
     out.push('## Submodules', '');
     for (const d of deltas) {
@@ -270,8 +277,7 @@ export async function generateTesterChangelogMarkdown(
         out.push(
           `### ${d.name}`,
           '',
-          `**Path:** ${d.subPath}`,
-          `**From:** ${d.fromDisplay} **To:** ${d.toDisplay}`,
+          `> **Path:** \`${d.subPath}\` · **${d.fromDisplay}** → **${d.toDisplay}**`,
           '',
         );
         if (d.commits.length > 0) {
@@ -287,20 +293,18 @@ export async function generateTesterChangelogMarkdown(
         out.push(
           `### ${d.name} (added)`,
           '',
-          `**Path:** ${d.subPath}`,
-          `**Now at:** ${d.toDisplay}`,
+          `> **Path:** \`${d.subPath}\` · **Now at:** **${d.toDisplay}**`,
           '',
-          'Submodule was added; confirm checkout and app behavior for anything that depends on it.',
+          '> Submodule was added; confirm checkout and app behavior for anything that depends on it.',
           '',
         );
       } else {
         out.push(
           `### ${d.name} (removed)`,
           '',
-          `**Path:** ${d.subPath}`,
-          `**Was at:** ${d.fromDisplay}`,
+          `> **Path:** \`${d.subPath}\` · **Was at:** **${d.fromDisplay}**`,
           '',
-          'Submodule was removed; regression-test any flows that used it.',
+          '> Submodule was removed; regression-test any flows that used it.',
           '',
         );
       }

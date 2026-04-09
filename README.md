@@ -82,7 +82,7 @@ Use **`tunai-build-script --generate-changelog`** as the **first** argument; eve
 
 Discovery: walks up for **`pubspec.yaml`** unless you pass **`--project-root`** or **`--git-root`**. Range: **`--from`** / **`--to`** or two positionals; non-interactive defaults: from = latest tag or `HEAD`, to = `HEAD`. **`--strict`** fails if the main repo `git log` errors.
 
-**Tester PR list:** Entries are **`### PR #N — <title>`** plus the PR body (markdown as returned by GitHub). If **`gh auth login`** is not set up, titles/descriptions fall back to the **commit subject** (with `(#N)` stripped) and **commit body**. Use **`--no-fetch-github-pr`** to force that fallback only. Each repo’s **`origin`** should be a `github.com` URL (submodules use that submodule’s remote). Use **`--github-repo owner/repo`** for the **main** app when `origin` is not standard GitHub. For GitHub Enterprise with `gh`, set **`GH_HOST`** as usual.
+**Tester PR list:** Entries are **`#### PR #N — <title>`** plus the PR body (markdown as returned by GitHub). PR metadata is **prefetched in parallel** (bounded concurrency) so large releases are much faster than one `gh pr view` at a time. If **`gh auth login`** is not set up, titles/descriptions fall back to the **commit subject** (with `(#N)` stripped) and **commit body**. Use **`--no-fetch-github-pr`** to force that fallback only. Each repo’s **`origin`** should be a `github.com` URL (submodules use that submodule’s remote). Use **`--github-repo owner/repo`** for the **main** app when `origin` is not standard GitHub. For GitHub Enterprise with `gh`, set **`GH_HOST`** as usual.
 
 Commits **without** `(#N)` in the subject do not appear in the tester file (engineering `changelog.md` still lists every commit).
 

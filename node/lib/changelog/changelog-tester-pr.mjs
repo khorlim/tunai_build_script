@@ -4,21 +4,113 @@ import {
   extractPrNumberFromSubject,
   stripPrMarkerFromSubject,
   parseGithubRepoFromRemoteUrl,
+  demoteMarkdownHeadings,
 } from './changelog-parse.mjs';
-import { getGitOriginUrl, fetchGithubPullViaGh } from './changelog-github.mjs';
+import {
+  getGitOriginUrl,
+  fetchGithubPullViaGh,
+  prefetchGithubPullJobs,
+  DEFAULT_GH_PR_FETCH_CONCURRENCY,
+} from './changelog-github.mjs';
 
 /**
- * @typedef {{ fetchPr: boolean, repoOverride: { owner: string, repo: string } | null, cache: Map<string, Awaited<ReturnType<typeof fetchGithubPullViaGh>>>, warn: (msg: string) => void }} GithubFetchContext
+ * @typedef {{ fetchPr: boolean, repoOverride: { owner: string, repo: string } | null, cache: Map<string, Awaited<ReturnType<typeof fetchGithubPullViaGh>>>, originUrlCache?: Map<string, string | null>, warn: (msg: string) => void }} GithubFetchContext
  */
 
 /**
+ * @param {string} gitCwd
+ * @param {string | null | undefined} projectRootForGithubOverride
+ * @param {GithubFetchContext | null | undefined} github
+ * @returns {Promise<{ owner: string, repo: string } | null>}
+ */
+export async function resolveTesterGithubRepo(
+  gitCwd,
+  projectRootForGithubOverride,
+  github,
+) {
+  const memo = github?.originUrlCache ?? null;
+  const fromOrigin = parseGithubRepoFromRemoteUrl(
+    await getGitOriginUrl(gitCwd, memo),
+  );
+  const overrideRoot = projectRootForGithubOverride ?? null;
+  if (overrideRoot && path.resolve(gitCwd) === path.resolve(overrideRoot)) {
+    return github?.repoOverride ?? fromOrigin;
+  }
+  return fromOrigin;
+}
+
+/**
+ * Unique PR fetch jobs for one repo’s commit list (git log order preserved for first-seen keys only in map iteration — order not needed for prefetch).
+ *
+ * @param {string[]} commitBlocks
+ * @param {{ owner: string, repo: string }} ownerRepo
+ * @returns {{ key: string, owner: string, repo: string, pullNumber: number }[]}
+ */
+export function collectTesterPrFetchJobs(commitBlocks, ownerRepo) {
+  /** @type {Map<string, { key: string, owner: string, repo: string, pullNumber: number }>} */
+  const byKey = new Map();
+  for (const block of commitBlocks) {
+    const { subject } = splitCommitBlock(block);
+    const pullNumber = extractPrNumberFromSubject(subject);
+    if (pullNumber == null) continue;
+    const key = `${ownerRepo.owner}/${ownerRepo.repo}#${pullNumber}`;
+    if (byKey.has(key)) continue;
+    byKey.set(key, {
+      key,
+      owner: ownerRepo.owner,
+      repo: ownerRepo.repo,
+      pullNumber,
+    });
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Warm `github.cache` for every PR referenced in the main repo and updated submodules.
+ *
+ * @param {GithubFetchContext} github
+ * @param {string} projectRoot
+ * @param {string[]} mainCommits
+ * @param {Awaited<ReturnType<import('./changelog-git.mjs').getSubmoduleDeltas>>} deltas
+ * @param {number} [concurrency]
+ */
+export async function prefetchTesterPullMetadata(
+  github,
+  projectRoot,
+  mainCommits,
+  deltas,
+  concurrency = DEFAULT_GH_PR_FETCH_CONCURRENCY,
+) {
+  if (!github?.fetchPr) return;
+  /** @type {Map<string, { key: string, owner: string, repo: string, pullNumber: number }>} */
+  const byKey = new Map();
+  const mergeJobs = async (blocks, gitCwd) => {
+    const ownerRepo = await resolveTesterGithubRepo(
+      gitCwd,
+      projectRoot,
+      github,
+    );
+    if (!ownerRepo) return;
+    for (const j of collectTesterPrFetchJobs(blocks, ownerRepo)) {
+      byKey.set(j.key, j);
+    }
+  };
+  await mergeJobs(mainCommits, projectRoot);
+  for (const d of deltas) {
+    if (d.kind === 'updated' && d.commits.length > 0) {
+      await mergeJobs(d.commits, path.join(projectRoot, d.subPath));
+    }
+  }
+  await prefetchGithubPullJobs(github.cache, [...byKey.values()], concurrency);
+}
+
+/**
  * Tester changelog: one entry per unique PR number in git log order (newest first).
- * Uses `gh pr view` for title + body when GitHub context is available and fetch is enabled.
+ * Assumes `prefetchTesterPullMetadata` already ran when `github.fetchPr` is true (cache hits only).
  *
  * @param {string[]} commitBlocks
  * @param {string[]} out
  * @param {{ gitCwd: string, github?: GithubFetchContext | null, projectRootForGithubOverride?: string | null }} opts
- *   When `gitCwd` equals `projectRootForGithubOverride`, `github.repoOverride` applies (main app). Submodules always use their own origin.
  * @returns {Promise<void>}
  */
 export async function appendTesterPrOnlyEntriesAsync(commitBlocks, out, opts) {
@@ -26,13 +118,11 @@ export async function appendTesterPrOnlyEntriesAsync(commitBlocks, out, opts) {
   const gitCwd = opts.gitCwd;
   const overrideRoot = opts.projectRootForGithubOverride ?? null;
 
-  const fromOrigin = parseGithubRepoFromRemoteUrl(
-    await getGitOriginUrl(gitCwd),
+  const ownerRepo = await resolveTesterGithubRepo(
+    gitCwd,
+    overrideRoot,
+    gh ?? undefined,
   );
-  const ownerRepo =
-    overrideRoot && path.resolve(gitCwd) === path.resolve(overrideRoot)
-      ? gh?.repoOverride ?? fromOrigin
-      : fromOrigin;
 
   let warnedNoOrigin = false;
   const hadPrMarkerInLog = commitBlocks.some((b) => {
@@ -42,6 +132,8 @@ export async function appendTesterPrOnlyEntriesAsync(commitBlocks, out, opts) {
 
   const seenPr = new Set();
   let count = 0;
+  /** PR titles use `####` so template `###` sections in the body become `#####`+. */
+  const BODY_MIN_HEADING = 5;
 
   for (const block of commitBlocks) {
     const { subject, body } = splitCommitBlock(block);
@@ -68,33 +160,46 @@ export async function appendTesterPrOnlyEntriesAsync(commitBlocks, out, opts) {
 
     if (gh?.fetchPr) {
       const cacheKey = `${ownerRepo.owner}/${ownerRepo.repo}#${prNum}`;
-      let fetched = gh.cache.get(cacheKey);
-      if (!fetched) {
-        fetched = await fetchGithubPullViaGh(
-          ownerRepo.owner,
-          ownerRepo.repo,
-          prNum,
-        );
-        gh.cache.set(cacheKey, fetched);
-      }
-      if (fetched.ok) {
+      const fetched = gh.cache.get(cacheKey);
+      if (fetched?.ok) {
         title = fetched.title.trim() || fallbackTitle;
         description = (fetched.body || '').trim();
-      } else {
+      } else if (fetched && !fetched.ok) {
         gh.warn(
           `${ownerRepo.owner}/${ownerRepo.repo} PR #${prNum}: ${fetched.error}`,
         );
         title = fallbackTitle;
         description = body.trim();
+      } else {
+        const loaded = await fetchGithubPullViaGh(
+          ownerRepo.owner,
+          ownerRepo.repo,
+          prNum,
+        );
+        gh.cache.set(cacheKey, loaded);
+        if (loaded.ok) {
+          title = loaded.title.trim() || fallbackTitle;
+          description = (loaded.body || '').trim();
+        } else {
+          gh.warn(
+            `${ownerRepo.owner}/${ownerRepo.repo} PR #${prNum}: ${loaded.error}`,
+          );
+          title = fallbackTitle;
+          description = body.trim();
+        }
       }
     } else {
       title = fallbackTitle;
       description = body.trim();
     }
 
-    out.push(`### PR #${prNum} — ${title}`, '');
+    if (count > 0) {
+      out.push('---', '');
+    }
+
+    out.push(`#### PR #${prNum} — ${title}`, '');
     if (description) {
-      out.push(description, '');
+      out.push(demoteMarkdownHeadings(description, BODY_MIN_HEADING), '');
     }
     out.push('');
     count += 1;
@@ -114,3 +219,5 @@ export async function appendTesterPrOnlyEntriesAsync(commitBlocks, out, opts) {
     }
   }
 }
+
+export { DEFAULT_GH_PR_FETCH_CONCURRENCY };
