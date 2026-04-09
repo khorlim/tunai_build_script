@@ -2,8 +2,8 @@
 /**
  * Generate changelog.md (engineering) and changelog_tester.md from git history.
  * Tester doc reads `### User Visible Changes` and `### Risk Level` from squash/PR bodies.
- * Optional: with `--fetch-github-pr`, loads PR bodies when the commit body is empty but the
- * subject contains `(#123)`: uses `GITHUB_TOKEN` / `GH_TOKEN` + REST API if set, else `gh pr view`.
+ * Tester PR bodies: by default uses **GitHub CLI** (`gh pr view`) when `gh auth login` is OK;
+ * if `gh` is missing or not logged in, logs a warning and skips PR fetch. Use **--no-fetch-github-pr** to skip network entirely.
  * Submodules use that submodule's `git remote get-url origin`. Requires git on PATH.
  *
  * Usage:
@@ -250,9 +250,17 @@ export function extractPrTesterSections(body) {
 export function splitCommitBlock(commitBlock) {
   const lines = commitBlock.split('\n');
   const firstLine = lines[0].trim();
-  const m = firstLine.match(/^([0-9a-f]{4,40})\s+(.+)$/i);
+  // Allow ASCII space or en/em dash between shortSha and subject (git uses space; pasted lines may use —).
+  const m = firstLine.match(
+    /^([0-9a-f]{4,40})(?:\s+|\s*[\u2013\u2014]\s+)(.+)$/iu,
+  );
   const shortSha = m ? m[1] : '';
-  const subject = m ? m[2].trim() : firstLine;
+  const subject = m
+    ? m[2]
+        .trim()
+        .replace(/^[\u2013\u2014\-–]\s*/u, '')
+        .trim()
+    : firstLine;
   const body = lines.slice(1).join('\n').trim();
   return { shortSha, subject, firstLine, body };
 }
@@ -307,37 +315,18 @@ async function getGitOriginUrl(cwd) {
   return u || null;
 }
 
+/** Cached result for one process run (CLI). */
+let ghAuthOkCache = /** @type {boolean | null} */ (null);
+
 /**
- * @param {string} owner
- * @param {string} repo
- * @param {number} pullNumber
- * @param {string} token
- * @returns {Promise<{ ok: true, body: string } | { ok: false, error: string }>}
+ * Whether `gh auth status` succeeds (logged in). Caches per process.
+ * @returns {Promise<boolean>}
  */
-export async function fetchGithubPullBody(owner, repo, pullNumber, token) {
-  const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${pullNumber}`;
-  try {
-    const res = await fetch(url, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'tunai-build-script-generate-changelog',
-      },
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      return {
-        ok: false,
-        error: `${res.status} ${text.slice(0, 240)}`,
-      };
-    }
-    const data = JSON.parse(text);
-    const body = typeof data.body === 'string' ? data.body : '';
-    return { ok: true, body };
-  } catch (e) {
-    return { ok: false, error: String(e?.message ?? e) };
-  }
+export async function checkGhCliAuthenticated() {
+  if (ghAuthOkCache !== null) return ghAuthOkCache;
+  const r = await runProcess(null, 'gh', ['auth', 'status']);
+  ghAuthOkCache = r.code === 0;
+  return ghAuthOkCache;
 }
 
 /**
@@ -361,8 +350,8 @@ export async function fetchGithubPullBodyViaGh(owner, repo, pullNumber) {
   const r = await runProcess(null, 'gh', args);
   if (r.code !== 0) {
     const hint =
-      r.stderr.includes('executable') || r.stderr.includes('ENOENT')
-        ? ' (install GitHub CLI or set GITHUB_TOKEN / GH_TOKEN)'
+      /ENOENT|not found|spawn|executable/i.test(r.stderr || '')
+        ? ' (install GitHub CLI and run gh auth login)'
         : '';
     return {
       ok: false,
@@ -377,21 +366,6 @@ export async function fetchGithubPullBodyViaGh(owner, repo, pullNumber) {
   } catch {
     return { ok: false, error: 'gh returned invalid JSON' };
   }
-}
-
-/**
- * Prefers REST + token when set; otherwise `gh pr view`.
- * @param {string} owner
- * @param {string} repo
- * @param {number} pullNumber
- * @param {string | null | undefined} token
- */
-export async function fetchPullRequestBody(owner, repo, pullNumber, token) {
-  const t = token?.trim();
-  if (t) {
-    return fetchGithubPullBody(owner, repo, pullNumber, t);
-  }
-  return fetchGithubPullBodyViaGh(owner, repo, pullNumber);
 }
 
 /**
@@ -712,13 +686,13 @@ async function loadMainRepositoryCommits(projectRoot, fromTag, toTag) {
 }
 
 /**
- * @typedef {{ fetchPr: boolean, token: string | null, repoOverride: { owner: string, repo: string } | null, cache: Map<string, Awaited<ReturnType<typeof fetchPullRequestBody>>>, warn: (msg: string) => void }} GithubFetchContext
+ * @typedef {{ fetchPr: boolean, repoOverride: { owner: string, repo: string } | null, cache: Map<string, Awaited<ReturnType<typeof fetchGithubPullBodyViaGh>>>, warn: (msg: string) => void }} GithubFetchContext
  */
 
 /**
  * @param {string[]} commitBlocks
  * @param {string[]} out
- * @param {{ missingContext?: string, gitCwd: string, github?: GithubFetchContext | null }} [opts]
+ * @param {{ missingContext?: string, gitCwd: string, github?: GithubFetchContext | null, fetchExplicitlyDisabled?: boolean }} [opts]
  */
 async function appendTesterEntriesForCommitsAsync(commitBlocks, out, opts = {}) {
   /** @type {{ shortSha: string, subject: string, userVisible: string | null, riskLevel: string | null, prDescriptionFallback: string | null }[]} */
@@ -728,6 +702,8 @@ async function appendTesterEntriesForCommitsAsync(commitBlocks, out, opts = {}) 
 
   const gh = opts.github;
   const gitCwd = opts.gitCwd;
+  const fetchAttempted = Boolean(gh?.fetchPr);
+  const fetchExplicitlyDisabled = Boolean(opts.fetchExplicitlyDisabled);
 
   for (const block of commitBlocks) {
     const { shortSha, subject, body } = splitCommitBlock(block);
@@ -748,11 +724,10 @@ async function appendTesterEntriesForCommitsAsync(commitBlocks, out, opts = {}) 
           const cacheKey = `${ownerRepo.owner}/${ownerRepo.repo}#${prNum}`;
           let fetched = gh.cache.get(cacheKey);
           if (!fetched) {
-            fetched = await fetchPullRequestBody(
+            fetched = await fetchGithubPullBodyViaGh(
               ownerRepo.owner,
               ownerRepo.repo,
               prNum,
-              gh.token,
             );
             gh.cache.set(cacheKey, fetched);
           }
@@ -803,19 +778,53 @@ async function appendTesterEntriesForCommitsAsync(commitBlocks, out, opts = {}) 
   }
 
   if (without.length > 0) {
-    const heading = opts.missingContext
-      ? `### Missing PR tester sections — ${opts.missingContext}`
-      : '### Missing PR tester sections';
-    out.push(heading, '');
-    out.push(
-      '*No tester sections in the commit body, no `(#number)` in the subject for GitHub lookup, or PR fetch failed. Use the engineering changelog or ask the author.*',
-      '',
-    );
+    const h = opts.missingContext ? '####' : '###';
+    const ctx = opts.missingContext ? ` — ${opts.missingContext}` : '';
+
+    /** @type {{ shortSha: string, subject: string }[]} */
+    const withPrInSubject = [];
+    /** @type {{ shortSha: string, subject: string }[]} */
+    const noPrInSubject = [];
     for (const e of without) {
+      if (extractPrNumberFromSubject(e.subject) != null) {
+        withPrInSubject.push(e);
+      } else {
+        noPrInSubject.push(e);
+      }
+    }
+
+    const bullet = (e) => {
       const head = e.shortSha ? `${e.shortSha} — ${e.subject}` : e.subject;
       out.push(`- ${head}`);
+    };
+
+    if (withPrInSubject.length > 0) {
+      out.push(`${h} PR linked in subject but not in tester output${ctx}`, '');
+      let explain;
+      if (fetchExplicitlyDisabled) {
+        explain =
+          '*These subjects include `(#number)` but PR fetch was disabled (**--no-fetch-github-pr**). Remove that flag or add `### User Visible Changes` / `### Risk Level` to the squash body.*';
+      } else if (fetchAttempted) {
+        explain =
+          '*PR was fetched (or attempted) but the body had no `### User Visible Changes` / `### Risk Level`, the PR description was empty, or GitHub returned an error — see warnings above. You can still use the engineering changelog.*';
+      } else {
+        explain =
+          '*These subjects include `(#number)` but PR descriptions were not loaded — **GitHub CLI** was missing, not logged in (`gh auth login`), or skipped. See the warning above.*';
+      }
+      out.push(explain, '');
+      for (const e of withPrInSubject) bullet(e);
+      out.push('');
     }
-    out.push('');
+
+    if (noPrInSubject.length > 0) {
+      out.push(`${h} No PR number in subject${ctx}`, '');
+      out.push(
+        '*No `(#number)` in the squash subject and no tester sections in the commit body — nothing to match on GitHub. Use the engineering changelog or ask the author to add `(#N)` or template sections.*',
+        '',
+      );
+      for (const e of noPrInSubject) bullet(e);
+      out.push('');
+    }
   }
 }
 
@@ -824,7 +833,8 @@ async function appendTesterEntriesForCommitsAsync(commitBlocks, out, opts = {}) 
  * @param {string} projectRoot
  * @param {string} fromTag
  * @param {string} toTag
- * @param {{ strictMainLog?: boolean, onGitWarning?: (msg: string) => void, fetchGithubPr?: boolean, githubRepo?: string | null, githubToken?: string | null }} [options]
+ * @param {{ strictMainLog?: boolean, onGitWarning?: (msg: string) => void, fetchGithubPr?: boolean | null, githubRepo?: string | null }} [options]
+ *   fetchGithubPr: false = never fetch (--no-fetch-github-pr); true / null / undefined = try `gh` when generating tester doc
  * @returns {Promise<{ markdown: string, warnings: string[] }>}
  */
 export async function generateTesterChangelogMarkdown(
@@ -839,14 +849,9 @@ export async function generateTesterChangelogMarkdown(
     options.onGitWarning?.(msg);
   };
 
-  const tokenRaw =
-    options.githubToken ??
-    process.env.GITHUB_TOKEN ??
-    process.env.GH_TOKEN ??
-    '';
-  const token = tokenRaw.trim() || null;
-  const wantFetch = Boolean(options.fetchGithubPr);
-  const fetchWorks = wantFetch;
+  const flag = options.fetchGithubPr;
+  const wantFetch = flag !== false;
+  const fetchExplicitlyDisabled = flag === false;
   const repoOverrideParsed = options.githubRepo
     ? parseGithubRepoArg(options.githubRepo)
     : null;
@@ -857,15 +862,22 @@ export async function generateTesterChangelogMarkdown(
   }
 
   /** @type {GithubFetchContext | null} */
-  const github = fetchWorks
-    ? {
+  let github = null;
+  if (wantFetch) {
+    const ghOk = await checkGhCliAuthenticated();
+    if (!ghOk) {
+      warn(
+        'GitHub CLI is not logged in or not installed; PR descriptions will not be fetched. Run: gh auth login (install from https://cli.github.com/)',
+      );
+    } else {
+      github = {
         fetchPr: true,
-        token,
         repoOverride: repoOverrideParsed,
         cache: new Map(),
         warn,
-      }
-    : null;
+      };
+    }
+  }
 
   const now = new Date();
   const { version, dateString } = await getReleaseVersionAndDate(
@@ -891,9 +903,9 @@ export async function generateTesterChangelogMarkdown(
     '',
     '*Built from squash merge bodies. Expected sections: `### User Visible Changes`, `### Risk Level` (headings are matched case-insensitively).*',
   );
-  if (fetchWorks) {
+  if (wantFetch) {
     out.push(
-      '*With `--fetch-github-pr`, PR bodies load when the subject contains `(#123)` and the commit body has no tester sections. Uses `GITHUB_TOKEN` / `GH_TOKEN` + api.github.com if set; otherwise `gh pr view` (GitHub CLI, `gh auth login`). Repo = each checkout’s `origin` (submodules use the submodule remote).*',
+      '*PR bodies load via **GitHub CLI** (`gh pr view`) when the subject contains `(#123)` and the commit body has no tester sections, if `gh auth login` succeeded. Use **--no-fetch-github-pr** to skip. Repo = each checkout’s `origin` (submodules use the submodule remote).*',
     );
   }
   out.push('');
@@ -918,6 +930,7 @@ export async function generateTesterChangelogMarkdown(
       missingContext: 'main app',
       gitCwd: projectRoot,
       github,
+      fetchExplicitlyDisabled,
     });
   } else {
     out.push('*(no changes)*', '');
@@ -943,6 +956,7 @@ export async function generateTesterChangelogMarkdown(
             missingContext: `${d.name} (${d.subPath})`,
             gitCwd: path.join(projectRoot, d.subPath),
             github,
+            fetchExplicitlyDisabled,
           });
         } else {
           out.push('*(no commit list)*', '');
@@ -1085,7 +1099,8 @@ function parseCliArgs(argv) {
     output: null,
     testerOutput: null,
     noTester: false,
-    fetchGithubPr: false,
+    /** @type {boolean | null} null = default (use gh when authenticated) */
+    fetchGithubPr: null,
     githubRepo: null,
     from: null,
     to: null,
@@ -1124,6 +1139,8 @@ function parseCliArgs(argv) {
       out.noTester = true;
     } else if (a === '--fetch-github-pr') {
       out.fetchGithubPr = true;
+    } else if (a === '--no-fetch-github-pr') {
+      out.fetchGithubPr = false;
     } else if (a === '--strict') {
       out.strict = true;
     } else if (a.startsWith('-')) {
@@ -1159,12 +1176,13 @@ Options:
   --no-tester            Skip changelog_tester.md
   --project-root <dir>   Flutter app root (default: discover pubspec.yaml)
   --git-root <dir>       Git repo root (no pubspec required; overrides discovery)
-  --fetch-github-pr      Fill tester doc from GitHub PR body when subject has (#123) and commit body is empty
+  --fetch-github-pr      Optional; PR fetch via gh is already the default when gh is logged in
+  --no-fetch-github-pr   Never fetch PR bodies from GitHub
   --github-repo org/repo github.com owner/repo for the main app (if origin is not github.com)
   --strict               Exit with error if main repo git log fails
   -h, --help             Show this help
 
-  With --fetch-github-pr: REST + token if GITHUB_TOKEN/GH_TOKEN set; else gh pr view.
+  PR fetch uses GitHub CLI only (gh pr view). If gh auth login was not run, a warning is printed and PRs are skipped.
   Submodules use that submodule's origin URL (github.com, or GH_HOST for Enterprise with gh).
 
 Interactive (TTY): prompts for missing from/to (defaults: last tag → HEAD).
@@ -1173,8 +1191,7 @@ Non-interactive: missing from defaults to latest tag or HEAD; missing to default
 Examples:
   node node/lib/generate-changelog.mjs v1.0.0 HEAD
   node node/lib/generate-changelog.mjs --from v1.0.0 --output release-notes.md
-  GITHUB_TOKEN=ghp_xxx node node/lib/generate-changelog.mjs --fetch-github-pr v1.0.0 HEAD
-  node node/lib/generate-changelog.mjs --fetch-github-pr v1.0.0 HEAD   # uses gh if no token
+  node node/lib/generate-changelog.mjs --no-fetch-github-pr v1.0.0 HEAD
 `);
 }
 
@@ -1308,15 +1325,6 @@ async function main() {
   console.log(`Wrote ${outPath}`);
 
   if (!args.noTester) {
-    if (
-      args.fetchGithubPr &&
-      !process.env.GITHUB_TOKEN?.trim() &&
-      !process.env.GH_TOKEN?.trim()
-    ) {
-      console.warn(
-        'Note: no GITHUB_TOKEN/GH_TOKEN — PR bodies will be loaded via `gh pr view` if the GitHub CLI is installed and authenticated (`gh auth status`).',
-      );
-    }
     let testerResult;
     try {
       testerResult = await generateTesterChangelogMarkdown(
@@ -1325,7 +1333,8 @@ async function main() {
         finalTo,
         {
           ...genOpts,
-          fetchGithubPr: args.fetchGithubPr,
+          fetchGithubPr:
+            args.fetchGithubPr === null ? undefined : args.fetchGithubPr,
           githubRepo: args.githubRepo,
         },
       );

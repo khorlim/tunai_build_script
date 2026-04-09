@@ -66,8 +66,7 @@ tunai-build-script --generate-changelog
 tunai-build-script --generate-changelog v1.0.0 HEAD
 tunai-build-script --generate-changelog --from v1.0.0 --to HEAD -o CHANGELOG.release.md
 tunai-build-script --generate-changelog --git-root . --no-tester
-tunai-build-script --generate-changelog --fetch-github-pr v1.0.0 HEAD
-GITHUB_TOKEN=ghp_xxx tunai-build-script --generate-changelog --fetch-github-pr v1.0.0 HEAD
+tunai-build-script --generate-changelog --no-fetch-github-pr v1.0.0 HEAD
 ```
 
 Run **`tunai-build-script -help`** for the full option list.
@@ -83,7 +82,9 @@ Use **`tunai-build-script --generate-changelog`** as the **first** argument; eve
 
 Discovery: walks up for **`pubspec.yaml`** unless you pass **`--project-root`** or **`--git-root`**. Range: **`--from`** / **`--to`** or two positionals; non-interactive defaults: from = latest tag or `HEAD`, to = `HEAD`. **`--strict`** fails if the main repo `git log` errors.
 
-**PR descriptions when the squash body is empty:** If the commit **subject** includes GitHub’s **`(#123)`** but the git body has no tester sections, **`--fetch-github-pr`** loads the PR description and reuses the same `###` headings (or prints the full PR body under **PR description (GitHub)**). Resolution order: **`GITHUB_TOKEN`** or **`GH_TOKEN`** → REST API; if neither is set → **`gh pr view`** (install [GitHub CLI](https://cli.github.com/), run `gh auth login`). Each repo’s **`origin`** must be a `github.com` URL (submodules: that submodule’s remote). Use **`--github-repo owner/repo`** only for the **main** app when `origin` is not standard GitHub. For GitHub Enterprise with `gh`, set **`GH_HOST`** as usual.
+**PR descriptions when the squash body is empty:** If the commit **subject** includes **`(#123)`** but the git body has no tester sections, the generator loads the PR via **[GitHub CLI](https://cli.github.com/)** (`gh pr view`) when **`gh auth login`** has been run. If `gh` is missing or not authenticated, it **prints a warning** and **does not fetch** PRs. Use **`--no-fetch-github-pr`** to skip PR fetch entirely. Each repo’s **`origin`** should be a `github.com` URL (submodules: that submodule’s remote). Use **`--github-repo owner/repo`** only for the **main** app when `origin` is not standard GitHub. For GitHub Enterprise with `gh`, set **`GH_HOST`** as usual.
+
+The tester report splits **“PR in subject but nothing loaded”** vs **“no `(#number)` in subject”** so lists are not mislabeled.
 
 Squash/merge bodies (or PR descriptions when fetched) should include:
 

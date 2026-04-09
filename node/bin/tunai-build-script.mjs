@@ -45,14 +45,15 @@ Changelog (must be the first argument; needs git on PATH):
   --output, -o <path>    Engineering changelog (default: changelog.md)
   --tester-output <path> Tester changelog (default: changelog_tester.md)
   --no-tester            Skip changelog_tester.md
-  --fetch-github-pr      Load PR body when subject has (#123) and commit body lacks sections
+  --fetch-github-pr      Optional (redundant); gh PR fetch is default when gh is logged in
+  --no-fetch-github-pr   Skip all GitHub PR fetch
   --github-repo org/repo Main app GitHub owner/repo if origin is not github.com
   --project-root <dir>   Flutter root (default: discover pubspec.yaml)
   --git-root <dir>       Git repo only, no pubspec required
   --strict               Exit with error if main repo git log fails
   [fromRev] [toRev]      Positional range (same as --from / --to)
 
-  PR fetch: GITHUB_TOKEN or GH_TOKEN uses the REST API; otherwise gh pr view (gh auth login).
+  PR fetch: GitHub CLI only (gh pr view). If gh is not logged in, a warning is shown and PRs are skipped.
   Submodules use each submodule origin URL.
 
   Interactive TTY: prompts for missing from/to. Non-interactive: from defaults to latest tag or HEAD; to defaults to HEAD.
@@ -68,7 +69,7 @@ Examples:
   tunai-build-script --generate-changelog
   tunai-build-script --generate-changelog v1.0.0 HEAD
   tunai-build-script --generate-changelog --from v1.0.0 -o release-notes.md
-  tunai-build-script --generate-changelog --fetch-github-pr v1.0.0 HEAD
+  tunai-build-script --generate-changelog --no-fetch-github-pr v1.0.0 HEAD
 `);
 }
 
