@@ -1,6 +1,6 @@
 # tunai-build-script
 
-Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/) or [Loadly](https://loadly.io/)), optional **Telegram** notifications, **version bump** (`--bump-version`), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering log + tester doc with full squash/PR text).
+Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/) or [Loadly](https://loadly.io/)), optional **Telegram** notifications, **version bump** (`--bump-version`), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering log + tester doc listing **PR title + description** per `(#N)` commit, grouped by app vs submodules).
 
 Configuration lives in a single file at the **Flutter app root**: `tunai_build_script_config.json`.
 
@@ -78,13 +78,13 @@ Use **`tunai-build-script --generate-changelog`** as the **first** argument; eve
 | Output | Default path | Content |
 |--------|----------------|--------|
 | Engineering | `changelog.md` | Main repo + submodule commits (`--output` / `-o` to override) |
-| Tester | `changelog_tester.md` | **Full** squash/merge commit body per entry; if the body is empty and the subject has `(#N)`, **full PR description** via `gh pr view` (`--tester-output`; `--no-tester` to skip) |
+| Tester | `changelog_tester.md` | **PRs only**, grouped under **Main app** and each **Submodule**: **PR title + description** from `gh pr view` when available; only commits whose subject includes `(#N)` (`--tester-output`; `--no-tester` to skip) |
 
 Discovery: walks up for **`pubspec.yaml`** unless you pass **`--project-root`** or **`--git-root`**. Range: **`--from`** / **`--to`** or two positionals; non-interactive defaults: from = latest tag or `HEAD`, to = `HEAD`. **`--strict`** fails if the main repo `git log` errors.
 
-**PR text when the squash body is empty:** If the commit **subject** includes **`(#123)`** and the git body is empty, the generator loads the **entire PR description** with **[GitHub CLI](https://cli.github.com/)** (`gh pr view`) when **`gh auth login`** works. If `gh` is missing or not authenticated, it logs a **CLI warning** (not in the markdown file) and skips that fetch. Use **`--no-fetch-github-pr`** to skip PR fetch entirely. Each repo’s **`origin`** should be a `github.com` URL (submodules: that submodule’s remote). Use **`--github-repo owner/repo`** for the **main** app when `origin` is not standard GitHub. For GitHub Enterprise with `gh`, set **`GH_HOST`** as usual.
+**Tester PR list:** Entries are **`### PR #N — <title>`** plus the PR body (markdown as returned by GitHub). If **`gh auth login`** is not set up, titles/descriptions fall back to the **commit subject** (with `(#N)` stripped) and **commit body**. Use **`--no-fetch-github-pr`** to force that fallback only. Each repo’s **`origin`** should be a `github.com` URL (submodules use that submodule’s remote). Use **`--github-repo owner/repo`** for the **main** app when `origin` is not standard GitHub. For GitHub Enterprise with `gh`, set **`GH_HOST`** as usual.
 
-Squash and PR descriptions can use any structure (headings, lists, etc.); the tester file shows them **verbatim**.
+Commits **without** `(#N)` in the subject do not appear in the tester file (engineering `changelog.md` still lists every commit).
 
 **macOS TestFlight** uses `scripts/upload_macos_testflight.sh` (Xcode, CocoaPods). Prefer **`macos_testflight`** in `tunai_build_script_config.json` for API key JSON or legacy `ASC_*` paths; the CLI exports them for the script. See script header comments for env-only setup.
 

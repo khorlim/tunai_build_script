@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * Generate changelog.md (engineering) and changelog_tester.md from git history.
- * Tester doc: full squash commit body per change; if the body is empty and the subject has `(#N)`, loads the full PR body via **GitHub CLI** (`gh pr view`) when `gh auth login` is OK;
- * if `gh` is missing or not logged in, logs a warning and skips PR fetch. Use **--no-fetch-github-pr** to skip network entirely.
- * Submodules use that submodule's `git remote get-url origin`. Requires git on PATH.
+ * Engineering log: full commit list. Tester doc: **PRs only** — grouped under **Main app** and each
+ * **Submodule**; each entry is GitHub **PR title + description** (from `gh pr view` when available).
+ * Only commits whose subject contains `(#N)` are included. Requires git on PATH; PR fetch uses **GitHub CLI**.
  *
  * Usage:
  *   node node/lib/generate-changelog.mjs [fromRev] [toRev]
@@ -16,78 +16,72 @@
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
-import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
-import { readPubspec, getVersionFromPubspecContent } from './pubspec.mjs';
+import {
+  runGit,
+  parseFormattedLogOutput,
+  getFormattedLogCommits,
+  getLastTag,
+  getCurrentCommitSha,
+  getSubmoduleShaAtTag,
+  getSubmoduleTagAtSha,
+  getSubmodulePaths,
+  getSubmoduleDeltas,
+  getSubmoduleChanges,
+} from './changelog/changelog-git.mjs';
 
-/** Record/field delimiters for `git log --format`. Do not use \\x01/\\x02 in subjects or bodies or parsing will split incorrectly. */
-const RECORD_START = '\x01';
-const FIELD_SEP = '\x02';
+import {
+  extractPrTesterSections,
+  splitCommitBlock,
+  extractPrNumberFromSubject,
+  stripPrMarkerFromSubject,
+  parseGithubRepoFromRemoteUrl,
+  parseGithubRepoArg,
+} from './changelog/changelog-parse.mjs';
 
-/**
- * @param {string} cwd
- * @param {string[]} args
- * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
- */
-function runGit(cwd, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
-      cwd,
-      shell: false,
-      env: process.env,
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-    });
-    child.on('error', reject);
-    child.on('close', (code, signal) => {
-      resolve({ code: signal ? 1 : code ?? 1, stdout, stderr });
-    });
-  });
-}
+import {
+  getGitOriginUrl,
+  checkGhCliAuthenticated,
+  fetchGithubPullViaGh,
+  fetchGithubPullBodyViaGh,
+} from './changelog/changelog-github.mjs';
 
-/**
- * @param {string | null} cwd
- * @param {string} command
- * @param {string[]} args
- * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
- */
-function runProcess(cwd, command, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: cwd ?? undefined,
-      shell: false,
-      env: process.env,
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-    });
-    child.on('error', (err) => {
-      resolve({
-        code: 127,
-        stdout: '',
-        stderr: String(err?.message ?? err),
-      });
-    });
-    child.on('close', (code, signal) => {
-      resolve({ code: signal ? 1 : code ?? 1, stdout, stderr });
-    });
-  });
-}
+import {
+  getReleaseVersionAndDate,
+  resolveChangelogRevisionLabels,
+} from './changelog/changelog-release.mjs';
+
+import { appendTesterPrOnlyEntriesAsync } from './changelog/changelog-tester-pr.mjs';
+
+export {
+  parseFormattedLogOutput,
+  getFormattedLogCommits,
+  getLastTag,
+  getCurrentCommitSha,
+  getSubmoduleShaAtTag,
+  getSubmoduleTagAtSha,
+  getSubmodulePaths,
+  getSubmoduleDeltas,
+  getSubmoduleChanges,
+} from './changelog/changelog-git.mjs';
+
+export {
+  extractPrTesterSections,
+  splitCommitBlock,
+  extractPrNumberFromSubject,
+  stripPrMarkerFromSubject,
+  parseGithubRepoFromRemoteUrl,
+  parseGithubRepoArg,
+} from './changelog/changelog-parse.mjs';
+
+export {
+  checkGhCliAuthenticated,
+  fetchGithubPullBodyViaGh,
+  fetchGithubPullViaGh,
+  getGitOriginUrl,
+} from './changelog/changelog-github.mjs';
+
+export { getReleaseVersionAndDate, resolveChangelogRevisionLabels } from './changelog/changelog-release.mjs';
 
 /**
  * Resolve Flutter project root: walk up from startDir for pubspec.yaml;
@@ -131,242 +125,6 @@ export function resolveFlutterProjectRoot(options = {}) {
 }
 
 /**
- * @param {string} output
- * @returns {string[]} each entry: first line "shortSha subject", optional body lines
- */
-export function parseFormattedLogOutput(output) {
-  const parts = output.split(RECORD_START);
-  /** @type {string[]} */
-  const commits = [];
-  for (const part of parts) {
-    const trimmed = part.trim();
-    if (!trimmed) continue;
-    const fields = trimmed.split(FIELD_SEP);
-    if (fields.length < 2) continue;
-    const shortSha = fields[0].trim();
-    const subject = fields[1].trim();
-    const body =
-      fields.length > 2 ? fields.slice(2).join(FIELD_SEP).trim() : '';
-    const firstLine = `${shortSha} ${subject}`;
-    if (!body) {
-      commits.push(firstLine);
-    } else {
-      const bodyLines = body
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(
-          (l) =>
-            l.length > 0 && !l.toLowerCase().startsWith('co-authored-by:'),
-        );
-      let block = firstLine;
-      for (const line of bodyLines) {
-        block += `\n${line}`;
-      }
-      commits.push(block);
-    }
-  }
-  return commits;
-}
-
-/**
- * @param {string} projectRoot
- * @param {string} fromRev
- * @param {string} toRev
- * @param {string | null} [gitWorkingDir] submodule path → git -C
- * @param {{ onGitError?: (info: { args: string[], stderr: string }) => void }} [opts]
- * @returns {Promise<string[]>}
- */
-export async function getFormattedLogCommits(
-  projectRoot,
-  fromRev,
-  toRev,
-  gitWorkingDir = null,
-  opts = {},
-) {
-  const args = [
-    ...(gitWorkingDir ? ['-C', gitWorkingDir] : []),
-    'log',
-    `${fromRev}..${toRev}`,
-    '--no-merges',
-    `--format=${RECORD_START}%h${FIELD_SEP}%s${FIELD_SEP}%b`,
-  ];
-  const spawnCwd = gitWorkingDir ?? projectRoot;
-  const result = await runGit(spawnCwd, args);
-  if (result.code !== 0) {
-    opts.onGitError?.({ args, stderr: result.stderr });
-    return [];
-  }
-  return parseFormattedLogOutput(result.stdout);
-}
-
-const H3 = /^###\s*(.+?)\s*$/;
-
-/**
- * Extract `### User Visible Changes` and `### Risk Level` blocks (case-insensitive). Not used for tester changelog output (that uses the full body); kept for callers who want structured fields.
- * @param {string} body
- * @returns {{ userVisible: string | null, riskLevel: string | null }}
- */
-export function extractPrTesterSections(body) {
-  if (!body?.trim()) return { userVisible: null, riskLevel: null };
-  const lines = body.split('\n');
-  /** @type {'userVisible' | 'riskLevel' | null} */
-  let collecting = null;
-  const uv = [];
-  const risk = [];
-  for (const line of lines) {
-    const hm = line.match(H3);
-    if (hm) {
-      const title = hm[1].trim().toLowerCase();
-      if (title === 'user visible changes') {
-        collecting = 'userVisible';
-        continue;
-      }
-      if (title === 'risk level') {
-        collecting = 'riskLevel';
-        continue;
-      }
-      collecting = null;
-      continue;
-    }
-    if (collecting === 'userVisible') uv.push(line);
-    else if (collecting === 'riskLevel') risk.push(line);
-  }
-  const trimBlock = (arr) => {
-    const s = arr.join('\n').replace(/\s+$/u, '').trim();
-    return s.length > 0 ? s : null;
-  };
-  return {
-    userVisible: trimBlock(uv),
-    riskLevel: trimBlock(risk),
-  };
-}
-
-/**
- * @param {string} commitBlock first line `shortSha subject`, optional following body lines
- * @returns {{ shortSha: string, subject: string, firstLine: string, body: string }}
- */
-export function splitCommitBlock(commitBlock) {
-  const lines = commitBlock.split('\n');
-  const firstLine = lines[0].trim();
-  // Allow ASCII space or en/em dash between shortSha and subject (git uses space; pasted lines may use —).
-  const m = firstLine.match(
-    /^([0-9a-f]{4,40})(?:\s+|\s*[\u2013\u2014]\s+)(.+)$/iu,
-  );
-  const shortSha = m ? m[1] : '';
-  const subject = m
-    ? m[2]
-        .trim()
-        .replace(/^[\u2013\u2014\-–]\s*/u, '')
-        .trim()
-    : firstLine;
-  const body = lines.slice(1).join('\n').trim();
-  return { shortSha, subject, firstLine, body };
-}
-
-/**
- * GitHub squash titles often end with `(#46)`.
- * @param {string} subject
- * @returns {number | null}
- */
-export function extractPrNumberFromSubject(subject) {
-  const m = subject.match(/\(#(\d+)\)\s*$/);
-  if (m) return parseInt(m[1], 10);
-  const m2 = subject.match(/\(#(\d+)\)/);
-  if (m2) return parseInt(m2[1], 10);
-  return null;
-}
-
-/**
- * @param {string} url output of `git remote get-url origin`
- * @returns {{ owner: string, repo: string } | null}
- */
-export function parseGithubRepoFromRemoteUrl(url) {
-  if (!url?.trim()) return null;
-  const u = url.trim();
-  const scp = u.match(/^git@github\.com:([^/]+)\/([^/.]+?)(?:\.git)?$/i);
-  if (scp) return { owner: scp[1], repo: scp[2] };
-  const https = u.match(
-    /^https?:\/\/(?:[^@/]+\@)?github\.com\/([^/]+)\/([^/.]+?)(?:\.git)?(?:\/|$)/i,
-  );
-  if (https) return { owner: https[1], repo: https[2] };
-  return null;
-}
-
-/**
- * @param {string} s `owner/repo`
- * @returns {{ owner: string, repo: string } | null}
- */
-export function parseGithubRepoArg(s) {
-  const m = String(s).trim().match(/^([^/]+)\/([^/]+)$/);
-  if (!m) return null;
-  return { owner: m[1], repo: m[2].replace(/\.git$/i, '') };
-}
-
-/**
- * @param {string} cwd repo root (main app or submodule)
- * @returns {Promise<string | null>}
- */
-async function getGitOriginUrl(cwd) {
-  const r = await runGit(cwd, ['remote', 'get-url', 'origin']);
-  if (r.code !== 0) return null;
-  const u = r.stdout.trim();
-  return u || null;
-}
-
-/** Cached result for one process run (CLI). */
-let ghAuthOkCache = /** @type {boolean | null} */ (null);
-
-/**
- * Whether `gh auth status` succeeds (logged in). Caches per process.
- * @returns {Promise<boolean>}
- */
-export async function checkGhCliAuthenticated() {
-  if (ghAuthOkCache !== null) return ghAuthOkCache;
-  const r = await runProcess(null, 'gh', ['auth', 'status']);
-  ghAuthOkCache = r.code === 0;
-  return ghAuthOkCache;
-}
-
-/**
- * Uses GitHub CLI (`gh pr view`). Respects `gh auth login` and GH_HOST for Enterprise.
- * @param {string} owner
- * @param {string} repo
- * @param {number} pullNumber
- * @returns {Promise<{ ok: true, body: string } | { ok: false, error: string }>}
- */
-export async function fetchGithubPullBodyViaGh(owner, repo, pullNumber) {
-  const repoSpec = `${owner}/${repo}`;
-  const args = [
-    'pr',
-    'view',
-    String(pullNumber),
-    '--repo',
-    repoSpec,
-    '--json',
-    'body',
-  ];
-  const r = await runProcess(null, 'gh', args);
-  if (r.code !== 0) {
-    const hint =
-      /ENOENT|not found|spawn|executable/i.test(r.stderr || '')
-        ? ' (install GitHub CLI and run gh auth login)'
-        : '';
-    return {
-      ok: false,
-      error: `${(r.stderr || r.stdout).trim() || `exit ${r.code}`}${hint}`,
-    };
-  }
-  try {
-    const data = JSON.parse(r.stdout);
-    const body =
-      data.body === null || data.body === undefined ? '' : String(data.body);
-    return { ok: true, body };
-  } catch {
-    return { ok: false, error: 'gh returned invalid JSON' };
-  }
-}
-
-/**
  * @param {string[]} lines
  * @param {import('stream').Writable} write
  */
@@ -378,287 +136,6 @@ export function writeFormattedCommits(lines, write) {
       write(`  ${split[i]}\n`);
     }
   }
-}
-
-export async function getLastTag(projectRoot) {
-  const r = await runGit(projectRoot, [
-    'describe',
-    '--tags',
-    '--abbrev=0',
-  ]);
-  if (r.code !== 0) return null;
-  const t = r.stdout.trim();
-  return t || null;
-}
-
-export async function getCurrentCommitSha(projectRoot) {
-  const r = await runGit(projectRoot, ['rev-parse', '--short', 'HEAD']);
-  if (r.code !== 0) return 'HEAD';
-  const s = r.stdout.trim();
-  return s || 'HEAD';
-}
-
-/**
- * @param {string} projectRoot
- * @param {string} subPath
- * @param {string} tag
- */
-export async function getSubmoduleShaAtTag(projectRoot, subPath, tag) {
-  try {
-    const spec = tag === 'HEAD' ? `HEAD:${subPath}` : `${tag}:${subPath}`;
-    const r = await runGit(projectRoot, ['rev-parse', spec]);
-    if (r.code !== 0) return null;
-    const sha = r.stdout.trim();
-    return sha || null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * @param {string} projectRoot
- * @param {string} subPath
- * @param {string} sha
- */
-export async function getSubmoduleTagAtSha(projectRoot, subPath, sha) {
-  try {
-    const fullPath = path.join(projectRoot, subPath);
-    if (!fs.existsSync(fullPath)) return null;
-    const r = await runGit(projectRoot, [
-      '-C',
-      fullPath,
-      'describe',
-      '--tags',
-      '--exact-match',
-      sha,
-    ]);
-    if (r.code !== 0) return null;
-    const t = r.stdout.trim();
-    return t || null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * @param {string} projectRoot
- * @returns {Promise<string[]>}
- */
-export async function getSubmodulePaths(projectRoot) {
-  const gitmodulesPath = path.join(projectRoot, '.gitmodules');
-  if (!fs.existsSync(gitmodulesPath)) return [];
-  const content = fs.readFileSync(gitmodulesPath, 'utf8');
-  const lines = content.split('\n');
-  /** @type {string[]} */
-  const paths = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('path = ')) {
-      const p = trimmed.slice(7).trim();
-      if (p) paths.push(p);
-    }
-  }
-  return paths;
-}
-
-function shortSha(sha) {
-  return sha.length >= 7 ? sha.slice(0, 7) : sha;
-}
-
-/**
- * @typedef {{ kind: 'updated', subPath: string, name: string, oldSha: string, newSha: string, fromDisplay: string, toDisplay: string, commits: string[] }
- *   | { kind: 'added', subPath: string, name: string, newSha: string, toDisplay: string }
- *   | { kind: 'removed', subPath: string, name: string, oldSha: string, fromDisplay: string }} SubmoduleDelta
- */
-
-/**
- * @param {string} projectRoot
- * @param {string} subPath
- * @param {string} fromTag
- * @param {string} toTag
- * @param {(msg: string) => void} warn
- * @returns {Promise<SubmoduleDelta | null>}
- */
-async function computeSubmoduleDelta(
-  projectRoot,
-  subPath,
-  fromTag,
-  toTag,
-  warn,
-) {
-  const oldSha = await getSubmoduleShaAtTag(projectRoot, subPath, fromTag);
-  const newSha = await getSubmoduleShaAtTag(projectRoot, subPath, toTag);
-
-  if (oldSha && newSha && oldSha !== newSha) {
-    const name = path.basename(subPath);
-    const oldTag = await getSubmoduleTagAtSha(projectRoot, subPath, oldSha);
-    const newTag = await getSubmoduleTagAtSha(projectRoot, subPath, newSha);
-    const fromDisplay = oldTag ?? shortSha(oldSha);
-    const toDisplay = newTag
-      ? `${newTag} (${shortSha(newSha)})`
-      : shortSha(newSha);
-
-    const fullPath = path.join(projectRoot, subPath);
-    const commits = await getFormattedLogCommits(
-      projectRoot,
-      oldSha,
-      newSha,
-      fullPath,
-      {
-        onGitError: ({ stderr }) => {
-          if (stderr.trim()) warn(`git log submodule ${subPath}: ${stderr.trim()}`);
-        },
-      },
-    );
-    return {
-      kind: 'updated',
-      subPath,
-      name,
-      oldSha,
-      newSha,
-      fromDisplay,
-      toDisplay,
-      commits,
-    };
-  }
-  if (!oldSha && newSha) {
-    const name = path.basename(subPath);
-    const newT =
-      (await getSubmoduleTagAtSha(projectRoot, subPath, newSha)) ??
-      shortSha(newSha);
-    return {
-      kind: 'added',
-      subPath,
-      name,
-      newSha,
-      toDisplay: newT,
-    };
-  }
-  if (oldSha && !newSha) {
-    const name = path.basename(subPath);
-    const oldT =
-      (await getSubmoduleTagAtSha(projectRoot, subPath, oldSha)) ??
-      shortSha(oldSha);
-    return {
-      kind: 'removed',
-      subPath,
-      name,
-      oldSha,
-      fromDisplay: oldT,
-    };
-  }
-  return null;
-}
-
-/**
- * @param {string} projectRoot
- * @param {string} fromTag
- * @param {string} toTag
- * @param {{ onGitWarning?: (msg: string) => void }} [opts]
- * @returns {Promise<SubmoduleDelta[]>}
- */
-export async function getSubmoduleDeltas(projectRoot, fromTag, toTag, opts) {
-  const warn = opts?.onGitWarning ?? (() => {});
-  const subPaths = await getSubmodulePaths(projectRoot);
-  const results = await Promise.all(
-    subPaths.map((subPath) =>
-      computeSubmoduleDelta(projectRoot, subPath, fromTag, toTag, warn),
-    ),
-  );
-  return results.filter((d) => d != null);
-}
-
-/**
- * @param {string} projectRoot
- * @param {string} fromTag
- * @param {string} toTag
- * @param {{ onGitWarning?: (msg: string) => void }} [opts]
- */
-export async function getSubmoduleChanges(projectRoot, fromTag, toTag, opts) {
-  const lines = [];
-  const deltas = await getSubmoduleDeltas(projectRoot, fromTag, toTag, opts);
-
-  for (const d of deltas) {
-    if (d.kind === 'updated') {
-      lines.push(`### ${d.name}`, '', `**Path:** ${d.subPath}`);
-      lines.push(`**From:** ${d.fromDisplay} **To:** ${d.toDisplay}`, '');
-      if (d.commits.length > 0) {
-        for (const c of d.commits) {
-          const parts = c.split('\n');
-          lines.push(`- ${parts[0]}`);
-          for (let i = 1; i < parts.length; i++) lines.push(`  ${parts[i]}`);
-        }
-        lines.push('');
-      } else {
-        lines.push('(no changes)', '');
-      }
-    } else if (d.kind === 'added') {
-      lines.push(
-        `### ${d.name}`,
-        '',
-        `**Path:** ${d.subPath}`,
-        `**From:** untagged **To:** ${d.toDisplay}`,
-        '',
-        '(submodule added)',
-        '',
-      );
-    } else {
-      lines.push(
-        `### ${d.name}`,
-        '',
-        `**Path:** ${d.subPath}`,
-        `**From:** ${d.fromDisplay} **To:** (removed)`,
-        '',
-        '(submodule removed)',
-        '',
-      );
-    }
-  }
-
-  return lines.join('\n');
-}
-
-/**
- * @param {string} projectRoot
- * @param {string} toTag
- * @param {Date} now
- */
-async function getReleaseVersionAndDate(projectRoot, toTag, now) {
-  const pub = readPubspec(projectRoot);
-  let version = toTag;
-  if (toTag === 'HEAD') {
-    if (pub) {
-      const v = getVersionFromPubspecContent(pub.content);
-      if (v) version = `v${v}`;
-      else {
-        const r = await runGit(projectRoot, ['rev-parse', '--short', 'HEAD']);
-        version =
-          r.code === 0 && r.stdout.trim() ? r.stdout.trim() : 'untagged';
-      }
-    } else {
-      const r = await runGit(projectRoot, ['rev-parse', '--short', 'HEAD']);
-      version =
-        r.code === 0 && r.stdout.trim() ? r.stdout.trim() : 'untagged';
-    }
-  }
-  const pad = (n, w = 2) => String(n).padStart(w, '0');
-  const dateString = `${pad(now.getFullYear(), 4)}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-  return { version, dateString };
-}
-
-/**
- * @param {string} projectRoot
- * @param {string} fromTag
- * @param {string} toTag
- */
-async function resolveChangelogRevisionLabels(projectRoot, fromTag, toTag) {
-  const fromDisplay =
-    fromTag === 'HEAD'
-      ? await getCurrentCommitSha(projectRoot)
-      : fromTag;
-  const toDisplay =
-    toTag === 'HEAD' ? await getCurrentCommitSha(projectRoot) : toTag;
-  return { fromDisplay, toDisplay };
 }
 
 /**
@@ -684,64 +161,7 @@ async function loadMainRepositoryCommits(projectRoot, fromTag, toTag) {
 }
 
 /**
- * @typedef {{ fetchPr: boolean, repoOverride: { owner: string, repo: string } | null, cache: Map<string, Awaited<ReturnType<typeof fetchGithubPullBodyViaGh>>>, warn: (msg: string) => void }} GithubFetchContext
- */
-
-/**
- * @param {string[]} commitBlocks
- * @param {string[]} out
- * @param {{ gitCwd: string, github?: GithubFetchContext | null }} [opts]
- */
-async function appendTesterEntriesForCommitsAsync(commitBlocks, out, opts = {}) {
-  const gh = opts.github;
-  const gitCwd = opts.gitCwd;
-
-  for (const block of commitBlocks) {
-    const { shortSha, subject, body } = splitCommitBlock(block);
-    let description = body.trim();
-
-    if (!description && gh?.fetchPr) {
-      const prNum = extractPrNumberFromSubject(subject);
-      if (prNum != null) {
-        const ownerRepo =
-          gh.repoOverride ?? parseGithubRepoFromRemoteUrl(await getGitOriginUrl(gitCwd));
-        if (!ownerRepo) {
-          gh.warn(
-            `Could not parse github.com from origin in ${gitCwd}; skipping PR #${prNum}`,
-          );
-        } else {
-          const cacheKey = `${ownerRepo.owner}/${ownerRepo.repo}#${prNum}`;
-          let fetched = gh.cache.get(cacheKey);
-          if (!fetched) {
-            fetched = await fetchGithubPullBodyViaGh(
-              ownerRepo.owner,
-              ownerRepo.repo,
-              prNum,
-            );
-            gh.cache.set(cacheKey, fetched);
-          }
-          if (fetched.ok) {
-            description = (fetched.body || '').trim();
-          } else {
-            gh.warn(
-              `${ownerRepo.owner}/${ownerRepo.repo} PR #${prNum}: ${fetched.error}`,
-            );
-          }
-        }
-      }
-    }
-
-    const title = shortSha ? `${shortSha} — ${subject}` : subject;
-    out.push(`#### ${title}`, '');
-    if (description) {
-      out.push(description, '');
-    }
-    out.push('');
-  }
-}
-
-/**
- * Tester-facing changelog: full squash commit body, or full GitHub PR body when the commit body is empty and `(#N)` is in the subject.
+ * Tester-facing changelog: PR title + description per `(#N)` in squash subject, grouped by main app vs submodule.
  * @param {string} projectRoot
  * @param {string} fromTag
  * @param {string} toTag
@@ -772,13 +192,13 @@ export async function generateTesterChangelogMarkdown(
     );
   }
 
-  /** @type {GithubFetchContext | null} */
+  /** @type {{ fetchPr: boolean, repoOverride: { owner: string, repo: string } | null, cache: Map<string, Awaited<ReturnType<typeof fetchGithubPullViaGh>>>, warn: (msg: string) => void } | null} */
   let github = null;
   if (wantFetch) {
     const ghOk = await checkGhCliAuthenticated();
     if (!ghOk) {
       warn(
-        'GitHub CLI is not logged in or not installed; PR descriptions will not be fetched. Run: gh auth login (install from https://cli.github.com/)',
+        'GitHub CLI is not logged in or not installed; PR titles/descriptions use commit text only. Run: gh auth login (install from https://cli.github.com/)',
       );
     } else {
       github = {
@@ -806,14 +226,13 @@ export async function generateTesterChangelogMarkdown(
   /** @type {string[]} */
   const out = [];
   out.push(
-    '# Tester changelog',
+    '# Tester changelog (PRs)',
     '',
     `## Release ${version}`,
     `**Date:** ${dateString}`,
     `**From:** ${fromDisplay} **To:** ${toDisplay}`,
     '',
   );
-  out.push('');
 
   const { mainCommits, mainLogErr } = await loadMainRepositoryCommits(
     projectRoot,
@@ -831,9 +250,10 @@ export async function generateTesterChangelogMarkdown(
     }
     out.push('*(Could not list commits.)*', '');
   } else if (mainCommits.length > 0) {
-    await appendTesterEntriesForCommitsAsync(mainCommits, out, {
+    await appendTesterPrOnlyEntriesAsync(mainCommits, out, {
       gitCwd: projectRoot,
       github,
+      projectRootForGithubOverride: projectRoot,
     });
   } else {
     out.push('*(no changes)*', '');
@@ -855,9 +275,10 @@ export async function generateTesterChangelogMarkdown(
           '',
         );
         if (d.commits.length > 0) {
-          await appendTesterEntriesForCommitsAsync(d.commits, out, {
+          await appendTesterPrOnlyEntriesAsync(d.commits, out, {
             gitCwd: path.join(projectRoot, d.subPath),
             github,
+            projectRootForGithubOverride: projectRoot,
           });
         } else {
           out.push('*(no commit list)*', '');
@@ -889,7 +310,7 @@ export async function generateTesterChangelogMarkdown(
   const scriptFile = fileURLToPath(import.meta.url);
   out.push(
     '---',
-    `*Generated on ${now.toISOString()} by ${path.basename(scriptFile)} (tester view)*`,
+    `*Generated on ${now.toISOString()} by ${path.basename(scriptFile)} (tester PR view)*`,
   );
 
   return { markdown: out.join('\n'), warnings };
@@ -1061,7 +482,7 @@ function parseCliArgs(argv) {
 function usage() {
   console.log(`Usage: generate-changelog.mjs [options] [fromRev] [toRev]
 
-Writes changelog.md (full git log) and changelog_tester.md (full squash/PR description per commit).
+Writes changelog.md (full git log) and changelog_tester.md (PR title + description per PR, grouped by main app and submodules).
 
 Options:
   --from <rev>           Start revision (tag, branch, SHA, or HEAD)
@@ -1072,13 +493,13 @@ Options:
   --project-root <dir>   Flutter app root (default: discover pubspec.yaml)
   --git-root <dir>       Git repo root (no pubspec required; overrides discovery)
   --fetch-github-pr      Optional; PR fetch via gh is already the default when gh is logged in
-  --no-fetch-github-pr   Never fetch PR bodies from GitHub
+  --no-fetch-github-pr   Never fetch PR titles/bodies from GitHub (use commit subject/body only)
   --github-repo org/repo github.com owner/repo for the main app (if origin is not github.com)
   --strict               Exit with error if main repo git log fails
   -h, --help             Show this help
 
-  PR fetch uses GitHub CLI only (gh pr view). If gh auth login was not run, a warning is printed and PRs are skipped.
-  Submodules use that submodule's origin URL (github.com, or GH_HOST for Enterprise with gh).
+  Tester doc includes only commits whose subject contains (#N). Submodules use that submodule's origin URL.
+  PR metadata uses GitHub CLI (gh pr view). If gh auth login was not run, commit text is used as fallback.
 
 Interactive (TTY): prompts for missing from/to (defaults: last tag → HEAD).
 Non-interactive: missing from defaults to latest tag or HEAD; missing to defaults to HEAD.

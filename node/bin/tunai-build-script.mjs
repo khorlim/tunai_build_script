@@ -38,8 +38,8 @@ Options:
 Changelog (must be the first argument; needs git on PATH):
   tunai-build-script --generate-changelog [changelog-options]
 
-  Writes changelog.md (engineering git log) and changelog_tester.md (full commit or PR text per
-  change; optional gh pr view when body empty and subject has (#N)). Options:
+  Writes changelog.md (engineering git log) and changelog_tester.md (PR title + description only,
+  grouped by main app and submodules; commits need (#N) in subject; gh pr view when logged in). Options:
   --from <rev>           Start revision (tag, branch, SHA, or HEAD)
   --to <rev>             End revision
   --output, -o <path>    Engineering changelog (default: changelog.md)
@@ -53,8 +53,8 @@ Changelog (must be the first argument; needs git on PATH):
   --strict               Exit with error if main repo git log fails
   [fromRev] [toRev]      Positional range (same as --from / --to)
 
-  PR fetch: GitHub CLI only (gh pr view). If gh is not logged in, a warning is shown and PRs are skipped.
-  Submodules use each submodule origin URL.
+  PR fetch: GitHub CLI (gh pr view). If gh is not logged in, commit subject/body is used as fallback.
+  Submodules use each submodule origin URL; --github-repo applies to the main app only.
 
   Interactive TTY: prompts for missing from/to. Non-interactive: from defaults to latest tag or HEAD; to defaults to HEAD.
 
