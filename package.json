@@ -14,9 +14,7 @@
     "scripts",
     "example"
   ],
-  "dependencies": {
-    "form-data": "^4.0.0"
-  },
+  "dependencies": {},
   "keywords": [
     "flutter",
     "apphost",
