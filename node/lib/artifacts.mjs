@@ -38,6 +38,10 @@ export function findAndroidBuildFile(projectRoot) {
     'flutter-apk',
   );
   if (fs.existsSync(flutterApk)) {
+    const releaseApkPath = path.join(flutterApk, 'app-release.apk');
+    if (fs.existsSync(releaseApkPath)) {
+      return releaseApkPath;
+    }
     for (const name of fs.readdirSync(flutterApk)) {
       if (name.endsWith('.apk')) {
         return path.join(flutterApk, name);
