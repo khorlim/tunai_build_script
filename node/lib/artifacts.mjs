@@ -14,22 +14,6 @@ export function findIpaFile(projectRoot) {
 }
 
 export function findAndroidBuildFile(projectRoot) {
-  const bundleDir = path.join(
-    projectRoot,
-    'build',
-    'app',
-    'outputs',
-    'bundle',
-    'release',
-  );
-  if (fs.existsSync(bundleDir)) {
-    for (const name of fs.readdirSync(bundleDir)) {
-      if (name.endsWith('.aab')) {
-        return path.join(bundleDir, name);
-      }
-    }
-  }
-
   const flutterApk = path.join(
     projectRoot,
     'build',
