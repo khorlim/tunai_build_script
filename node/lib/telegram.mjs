@@ -28,6 +28,40 @@ async function formatTelegramApiError(res) {
   }
 }
 
+/**
+ * Telegram Bot API can return HTTP 200 with { ok: false }.
+ * We must validate both HTTP and payload-level success.
+ *
+ * @param {Response} res
+ * @returns {Promise<{ success: boolean, description: string, payload: any }>}
+ */
+async function parseTelegramResponse(res) {
+  const text = await res.text();
+  let payload = null;
+  if (text?.trim()) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!res.ok) {
+    const description =
+      payload && typeof payload === 'object' && payload.description
+        ? `${payload.description} (ok=${payload.ok})`
+        : text || '(empty response body)';
+    return { success: false, description, payload };
+  }
+
+  if (payload && typeof payload === 'object' && payload.ok === false) {
+    const description = payload.description || 'Telegram API returned ok=false';
+    return { success: false, description, payload };
+  }
+
+  return { success: true, description: '', payload };
+}
+
 export async function sendTelegramMessage({
   botToken,
   chatId,
@@ -49,13 +83,19 @@ export async function sendTelegramMessage({
     body: JSON.stringify(body),
   });
 
-  if (res.ok) {
+  const parsed = await parseTelegramResponse(res);
+  if (parsed.success) {
     console.log('Telegram notification sent successfully');
+    return true;
   } else {
-    const err = await formatTelegramApiError(res);
+    const err =
+      parsed.description ||
+      (await formatTelegramApiError(res)) ||
+      'Unknown Telegram error';
     console.error(
       `Failed to send Telegram notification: ${res.status} - ${err}`,
     );
+    return false;
   }
 }
 
@@ -85,10 +125,16 @@ export async function sendTelegramDocument({
     body: form,
   });
 
-  if (res.ok) {
+  const parsed = await parseTelegramResponse(res);
+  if (parsed.success) {
     console.log(`Telegram file sent successfully: ${path.basename(filePath)}`);
+    return true;
   } else {
-    const err = await formatTelegramApiError(res);
+    const err =
+      parsed.description ||
+      (await formatTelegramApiError(res)) ||
+      'Unknown Telegram error';
     console.error(`Failed to send Telegram file: ${res.status} - ${err}`);
+    return false;
   }
 }

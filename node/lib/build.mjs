@@ -103,7 +103,7 @@ export async function performUpload({
     }
 
     console.log('Sending Android APK directly to Telegram...');
-    await sendTelegramDocument({
+    const apkSent = await sendTelegramDocument({
       botToken: telegram.bot_token,
       chatId: telegram.chat_id,
       topicId,
@@ -114,6 +114,11 @@ export async function performUpload({
         `Platform: ${platform}\n` +
         `Version: ${version}`,
     });
+    if (!apkSent) {
+      throw new Error(
+        'Telegram APK delivery failed. Check bot membership, chat/topic id, and Telegram API error details above.',
+      );
+    }
     await sendTelegramMessage({
       botToken: telegram.bot_token,
       chatId: telegram.chat_id,
