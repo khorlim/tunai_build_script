@@ -1,5 +1,9 @@
 {
   "upload": {
+    "providers": {
+      "ios": "apphost",
+      "android": "telegram_apk"
+    },
     "provider": "apphost",
     "changelog_path": null
   },

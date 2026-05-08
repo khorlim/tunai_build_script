@@ -1,6 +1,6 @@
 # tunai-build-script
 
-Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/) or [Loadly](https://loadly.io/)), optional **Telegram** notifications, **version bump** (`--bump-version`), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering log + tester doc listing **PR title + description** per `(#N)` commit, grouped by app vs submodules).
+Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/) or [Loadly](https://loadly.io/)), optional **Telegram** notifications (including Android direct APK delivery), **version bump** (`--bump-version`), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering log + tester doc listing **PR title + description** per `(#N)` commit, grouped by app vs submodules).
 
 Configuration lives in a single file at the **Flutter app root**: `tunai_build_script_config.json`.
 
@@ -30,15 +30,18 @@ Copy `example/tunai_build_script_config.example.json` to your Flutter project ro
 
 | Section | Purpose |
 |--------|---------|
-| `upload.provider` | `"apphost"` (default) or `"loadly"` |
-| `apphost` | Required when `upload.provider` is `apphost`: `user_id`, `app_id`, `key`, `ios_bundle_identifier`, `android_package_name` |
-| `loadly` | Required when `upload.provider` is `loadly`: `api_key` from [Loadly API](https://loadly.io/doc/view/api). Optional: `build_update_description`, `build_password`, `build_install_type`, `build_channel_shortcut`, `timeout_seconds` (60–1800, default 600) |
-| `telegram` | Optional. `bot_token`, `chat_id`, optional `topic_id`. Use `${ENV_VAR}` in strings to pull secrets from the environment |
+| `upload.providers` | Optional per-platform provider map, e.g. `{ "ios": "apphost", "android": "telegram_apk" }` |
+| `upload.provider` | Legacy/default provider fallback: `"apphost"` (default), `"loadly"`, or `"telegram_apk"` |
+| `apphost` | Required when the selected provider is `apphost`: `user_id`, `app_id`, `key`, `ios_bundle_identifier`, `android_package_name` |
+| `loadly` | Required when the selected provider is `loadly`: `api_key` from [Loadly API](https://loadly.io/doc/view/api). Optional: `build_update_description`, `build_password`, `build_install_type`, `build_channel_shortcut`, `timeout_seconds` (60–1800, default 600) |
+| `telegram` | Optional for notifications; required when provider is `telegram_apk`. `bot_token`, `chat_id`, optional `topic_id`. Use `${ENV_VAR}` in strings to pull secrets from the environment |
 | `ios.export_options_plist` | Relative path to the plist passed to `flutter build ipa` (default `ios/ExportOptions.plist`) |
 | `upload.changelog_path` | Optional relative path; file is sent via Telegram after a successful upload |
 | `macos_testflight` | For `--platform macos`: `scheme`, `export_plist`, and **`app_store_key_json_path`** (relative or absolute) pointing at JSON: `key_id`, `issuer_id`, `key` (PEM string), optional `duration`, `in_house`. The CLI writes a temp `.p8` for `altool`. `${ENV}` works inside that JSON. **Legacy:** `api_key_id`, `api_issuer_id`, `api_private_key_path` (used only if `app_store_key_json_path` is omitted) |
 
 Plist templates: `example/example_export_options_ios.plist` (IPA export), `example/example_export_options_macos.plist` (Mac App Store / TestFlight). App Store Connect API key JSON: `example/app_store_connect_api_key.example.json`.
+
+`telegram_apk` is Android-only and sends the built APK file directly to Telegram as a document.
 
 ## Commands
 

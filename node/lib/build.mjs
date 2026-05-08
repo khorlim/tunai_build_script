@@ -17,6 +17,16 @@ function resolvePath(projectRoot, rel) {
   return path.isAbsolute(rel) ? rel : path.join(projectRoot, rel);
 }
 
+function resolveUploadProvider(config, platform) {
+  const providers = config?.upload?.providers;
+  const byPlatform =
+    providers && typeof providers === 'object'
+      ? providers[platform]
+      : undefined;
+  const raw = byPlatform ?? config?.upload?.provider ?? 'apphost';
+  return String(raw).toLowerCase();
+}
+
 export async function performUpload({
   projectRoot,
   config,
@@ -32,12 +42,14 @@ export async function performUpload({
     process.exit(1);
   }
 
-  const provider = String(
-    (config.upload && config.upload.provider) || 'apphost',
-  ).toLowerCase();
-  if (provider !== 'apphost' && provider !== 'loadly') {
+  const provider = resolveUploadProvider(config, platform);
+  if (
+    provider !== 'apphost' &&
+    provider !== 'loadly' &&
+    provider !== 'telegram_apk'
+  ) {
     console.error(
-      `Error: upload.provider must be "apphost" or "loadly", got "${provider}"`,
+      `Error: upload provider must be "apphost", "loadly", or "telegram_apk", got "${provider}"`,
     );
     process.exit(1);
   }
@@ -68,62 +80,6 @@ export async function performUpload({
     throw new Error(`Unknown platform: ${platform}`);
   }
 
-  let installUrl;
-  if (provider === 'loadly') {
-    const loadly = getLoadlySection(config);
-    if (!loadly) {
-      console.error(
-        'Error: upload.provider is "loadly" but loadly.api_key is missing in tunai_build_script_config.json',
-      );
-      process.exit(1);
-    }
-    installUrl = await uploadToLoadly({ buildFilePath, loadly });
-  } else {
-    const apphost = getApphostSection(config);
-    if (!apphost) {
-      console.error(
-        'Error: Missing "apphost" in tunai_build_script_config.json',
-      );
-      process.exit(1);
-    }
-
-    let bundleIdentifier;
-    if (platform === 'ios') {
-      bundleIdentifier = apphost.ios_bundle_identifier;
-      if (!bundleIdentifier) {
-        console.error(
-          'Error: apphost.ios_bundle_identifier missing in tunai_build_script_config.json',
-        );
-        process.exit(1);
-      }
-    } else {
-      bundleIdentifier = apphost.android_package_name;
-      if (!bundleIdentifier) {
-        console.error(
-          'Error: apphost.android_package_name missing in tunai_build_script_config.json',
-        );
-        process.exit(1);
-      }
-    }
-
-    installUrl = await uploadToApphost({
-      platform,
-      buildFilePath,
-      version,
-      bundleIdentifier,
-      apphost: {
-        user_id: String(apphost.user_id ?? ''),
-        app_id: String(apphost.app_id ?? ''),
-        key: String(apphost.key ?? ''),
-      },
-    });
-  }
-
-  console.log('Upload completed successfully!');
-  console.log('Install your app from:');
-  console.log(installUrl);
-  console.log('');
-
   const appName = getAppName(projectRoot) ?? 'App';
   const telegram = getTelegramSection(config);
   const topicId =
@@ -132,18 +88,114 @@ export async function performUpload({
     process.env.TELEGRAM_TOPIC_ID ||
     undefined;
 
-  if (telegram) {
+  if (provider === 'telegram_apk') {
+    if (platform !== 'android') {
+      console.error(
+        'Error: upload provider "telegram_apk" is supported only for Android',
+      );
+      process.exit(1);
+    }
+    if (!telegram) {
+      console.error(
+        'Error: upload provider "telegram_apk" requires telegram.bot_token and telegram.chat_id in tunai_build_script_config.json',
+      );
+      process.exit(1);
+    }
+
+    console.log('Sending Android APK directly to Telegram...');
+    await sendTelegramDocument({
+      botToken: telegram.bot_token,
+      chatId: telegram.chat_id,
+      topicId,
+      filePath: buildFilePath,
+      caption:
+        `📦 Android APK\n\n` +
+        `App: ${appName}\n` +
+        `Platform: ${platform}\n` +
+        `Version: ${version}`,
+    });
     await sendTelegramMessage({
       botToken: telegram.bot_token,
       chatId: telegram.chat_id,
       topicId,
       text:
-        `✅ <b>Build & Upload Completed Successfully</b>\n\n` +
+        `✅ <b>Build Completed Successfully</b>\n\n` +
         `App: ${appName}\n` +
         `Platform: ${platform}\n` +
         `Version: ${version}\n\n` +
-        `📱 <b>Install URL:</b>\n${installUrl}`,
+        `APK has been sent as a Telegram document.`,
     });
+    console.log('Telegram APK delivery completed successfully!');
+  } else {
+    let installUrl;
+    if (provider === 'loadly') {
+      const loadly = getLoadlySection(config);
+      if (!loadly) {
+        console.error(
+          'Error: upload provider is "loadly" but loadly.api_key is missing in tunai_build_script_config.json',
+        );
+        process.exit(1);
+      }
+      installUrl = await uploadToLoadly({ buildFilePath, loadly });
+    } else {
+      const apphost = getApphostSection(config);
+      if (!apphost) {
+        console.error(
+          'Error: Missing "apphost" in tunai_build_script_config.json',
+        );
+        process.exit(1);
+      }
+
+      let bundleIdentifier;
+      if (platform === 'ios') {
+        bundleIdentifier = apphost.ios_bundle_identifier;
+        if (!bundleIdentifier) {
+          console.error(
+            'Error: apphost.ios_bundle_identifier missing in tunai_build_script_config.json',
+          );
+          process.exit(1);
+        }
+      } else {
+        bundleIdentifier = apphost.android_package_name;
+        if (!bundleIdentifier) {
+          console.error(
+            'Error: apphost.android_package_name missing in tunai_build_script_config.json',
+          );
+          process.exit(1);
+        }
+      }
+
+      installUrl = await uploadToApphost({
+        platform,
+        buildFilePath,
+        version,
+        bundleIdentifier,
+        apphost: {
+          user_id: String(apphost.user_id ?? ''),
+          app_id: String(apphost.app_id ?? ''),
+          key: String(apphost.key ?? ''),
+        },
+      });
+    }
+
+    console.log('Upload completed successfully!');
+    console.log('Install your app from:');
+    console.log(installUrl);
+    console.log('');
+
+    if (telegram) {
+      await sendTelegramMessage({
+        botToken: telegram.bot_token,
+        chatId: telegram.chat_id,
+        topicId,
+        text:
+          `✅ <b>Build & Upload Completed Successfully</b>\n\n` +
+          `App: ${appName}\n` +
+          `Platform: ${platform}\n` +
+          `Version: ${version}\n\n` +
+          `📱 <b>Install URL:</b>\n${installUrl}`,
+      });
+    }
   }
 
   const changelogConfigured =

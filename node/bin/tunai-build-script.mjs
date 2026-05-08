@@ -20,7 +20,7 @@ function usage() {
   (needs pubspec.yaml), --platform macos (needs macos/ or --project-root), or --generate-changelog.
 
 Options:
-  --platform ios|android|macos   iOS/Android: build & upload (apphost or Loadly via config). macos: TestFlight script.
+  --platform ios|android|macos   iOS/Android: build & upload (apphost/loadly/telegram_apk via config). macos: TestFlight script.
   --bump-version <type> [ver]   major | minor | patch | build | manual (manual needs e.g. 1.2.3+5)
   --upload                      Upload only (iOS/Android), no build
   --no-update                   Skip git pull, submodule update, flutter pub get (iOS/Android)
