@@ -16,10 +16,12 @@ const BUMP_TYPES = new Set(['major', 'minor', 'patch', 'build', 'manual']);
 function usage() {
   console.log(`Usage: tunai-build-script [options]
 
-  Config: ${CONFIG_FILENAME} is resolved from cwd or a parent. Not required for --bump-version
-  (needs pubspec.yaml), --platform macos (needs macos/ or --project-root), or --generate-changelog.
+  Config: ${CONFIG_FILENAME} is resolved from cwd or a parent, or pass --config <path>. Not required for
+  --bump-version (needs pubspec.yaml), --platform macos (needs macos/ or --project-root), or --generate-changelog.
 
 Options:
+  --config <path>               Config JSON file (absolute or relative). Paths inside config are relative to
+                                --project-root or the discovered Flutter app root (pubspec.yaml).
   --platform ios|android|macos   iOS/Android: build & upload (apphost/loadly/telegram_apk via config). macos: TestFlight script.
   --bump-version <type> [ver]   major | minor | patch | build | manual (manual needs e.g. 1.2.3+5)
   --upload                      Upload only (iOS/Android), no build
@@ -66,6 +68,7 @@ Examples:
   tunai-build-script --platform macos --build-only
   tunai-build-script --bump-version patch
   tunai-build-script --bump-version manual 1.2.3+5 --project-root /path/to/app
+  tunai-build-script --config ~/secrets/staging.json --project-root /path/to/app
   tunai-build-script --generate-changelog
   tunai-build-script --generate-changelog v1.0.0 HEAD
   tunai-build-script --generate-changelog --from v1.0.0 -o release-notes.md
@@ -97,6 +100,7 @@ function parseArgs(argv) {
   const out = {
     help: false,
     projectRoot: null,
+    config: null,
     bumpType: null,
     manualVersion: null,
     bumpYes: false,
@@ -116,7 +120,13 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '-h' || a === '-help' || a === '--help') out.help = true;
     else if (a === '--project-root') out.projectRoot = argv[++i];
-    else if (a === '--platform') {
+    else if (a === '--config') {
+      out.config = argv[++i];
+      if (!out.config || out.config.startsWith('-')) {
+        console.error('Error: --config requires a file path');
+        process.exit(1);
+      }
+    } else if (a === '--platform') {
       const p = argv[++i]?.toLowerCase();
       if (!p) {
         console.error('Error: --platform requires ios, android, or macos');
@@ -165,6 +175,17 @@ function parseArgs(argv) {
   return out;
 }
 
+function findPubspecRoot(startDir) {
+  let dir = path.resolve(startDir);
+  const { root: fsRoot } = path.parse(dir);
+  while (true) {
+    if (fs.existsSync(path.join(dir, 'pubspec.yaml'))) return dir;
+    if (dir === fsRoot) break;
+    dir = path.dirname(dir);
+  }
+  return null;
+}
+
 function resolvePubspecRoot(explicit) {
   if (explicit) {
     const root = path.resolve(explicit);
@@ -176,22 +197,54 @@ function resolvePubspecRoot(explicit) {
   }
   const found = findProjectWithConfig(process.cwd());
   if (found) return found.projectRoot;
-  let dir = process.cwd();
-  const { root: fsRoot } = path.parse(dir);
-  while (true) {
-    if (fs.existsSync(path.join(dir, 'pubspec.yaml'))) return dir;
-    if (dir === fsRoot) break;
-    dir = path.dirname(dir);
-  }
+  const pubRoot = findPubspecRoot(process.cwd());
+  if (pubRoot) return pubRoot;
   console.error(
     'Error: Could not find pubspec.yaml. Pass --project-root or run from your Flutter app.',
   );
   process.exit(1);
 }
 
-function resolveProjectRootWithConfig(explicit) {
-  if (explicit) {
-    const root = path.resolve(explicit);
+function resolveConfigFilePath(configArg) {
+  const configPath = path.resolve(configArg);
+  if (!fs.existsSync(configPath)) {
+    console.error(`Error: Config file not found: ${configPath}`);
+    process.exit(1);
+  }
+  if (!fs.statSync(configPath).isFile()) {
+    console.error(`Error: Config path is not a file: ${configPath}`);
+    process.exit(1);
+  }
+  return configPath;
+}
+
+function resolveProjectRootWithConfig(explicitProjectRoot, explicitConfigPath) {
+  if (explicitConfigPath) {
+    const configPath = resolveConfigFilePath(explicitConfigPath);
+    if (explicitProjectRoot) {
+      const root = path.resolve(explicitProjectRoot);
+      if (!fs.existsSync(path.join(root, 'pubspec.yaml'))) {
+        console.warn('Warning: pubspec.yaml not found in project root');
+      }
+      return { projectRoot: root, configPath };
+    }
+    const configDir = path.dirname(configPath);
+    const pubInConfigDir = findPubspecRoot(configDir);
+    if (pubInConfigDir) {
+      return { projectRoot: pubInConfigDir, configPath };
+    }
+    const pubFromCwd = findPubspecRoot(process.cwd());
+    if (pubFromCwd) {
+      return { projectRoot: pubFromCwd, configPath };
+    }
+    console.error(
+      'Error: Could not determine Flutter project root. Pass --project-root with --config.',
+    );
+    process.exit(1);
+  }
+
+  if (explicitProjectRoot) {
+    const root = path.resolve(explicitProjectRoot);
     const cfg = path.join(root, CONFIG_FILENAME);
     if (!fs.existsSync(cfg)) {
       console.error(`Error: ${CONFIG_FILENAME} not found in ${root}`);
@@ -208,7 +261,7 @@ function resolveProjectRootWithConfig(explicit) {
       `Error: Could not find ${CONFIG_FILENAME} in this directory or any parent.`,
     );
     console.error(
-      'Add tunai_build_script_config.json to your Flutter app root, or pass --project-root.',
+      `Add ${CONFIG_FILENAME} to your Flutter app root, or pass --config or --project-root.`,
     );
     process.exit(1);
   }
@@ -323,9 +376,16 @@ async function main() {
 
   if (mode === 'macos') {
     const appDir = resolveMacosAppDir(args.projectRoot);
+    const configPath = args.config
+      ? resolveConfigFilePath(args.config)
+      : null;
     console.log(`Using app directory: ${appDir}`);
+    if (configPath) {
+      console.log(`Using config: ${configPath}`);
+    }
     const code = await runMacosTestflightScript({
       appDir,
+      configPath,
       buildOnly: args.macosBuildOnly,
       repoUpdate: args.macosRepoUpdate,
     });
@@ -334,8 +394,10 @@ async function main() {
 
   const { projectRoot, configPath } = resolveProjectRootWithConfig(
     args.projectRoot,
+    args.config,
   );
   console.log(`Using project root: ${projectRoot}`);
+  console.log(`Using config: ${configPath}`);
 
   const config = loadConfigFile(configPath);
 

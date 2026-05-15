@@ -10,9 +10,15 @@ export function getPackageRoot() {
   return path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 }
 
-function getMacosTestflight(projectRoot) {
-  const cfgPath = path.join(projectRoot, CONFIG_FILENAME);
-  if (!fs.existsSync(cfgPath)) return {};
+function resolveConfigPath(projectRoot, configPath) {
+  if (configPath) return path.resolve(configPath);
+  const defaultPath = path.join(projectRoot, CONFIG_FILENAME);
+  return fs.existsSync(defaultPath) ? defaultPath : null;
+}
+
+function getMacosTestflight(projectRoot, configPath) {
+  const cfgPath = resolveConfigPath(projectRoot, configPath);
+  if (!cfgPath) return {};
   try {
     const config = loadConfigFile(cfgPath);
     return config.macos_testflight && typeof config.macos_testflight === 'object'
@@ -26,8 +32,8 @@ function getMacosTestflight(projectRoot) {
 /**
  * Sync env: SCHEME, EXPORT_PLIST, and legacy api_* (only if app_store_key_json_path is not set).
  */
-export function loadMacosEnvFromConfig(projectRoot) {
-  const m = getMacosTestflight(projectRoot);
+export function loadMacosEnvFromConfig(projectRoot, configPath) {
+  const m = getMacosTestflight(projectRoot, configPath);
   const extra = {};
   if (m.scheme) extra.SCHEME = String(m.scheme).trim();
   if (m.export_plist) {
@@ -114,11 +120,11 @@ export async function materializeAppStoreKeyFromJson(projectRoot, jsonRel) {
 }
 
 /**
- * @param {{ appDir: string, buildOnly?: boolean, repoUpdate?: boolean }} opts
+ * @param {{ appDir: string, configPath?: string | null, buildOnly?: boolean, repoUpdate?: boolean }} opts
  * @returns {Promise<number>} exit code
  */
 export async function runMacosTestflightScript(opts) {
-  const { appDir, buildOnly, repoUpdate } = opts;
+  const { appDir, configPath, buildOnly, repoUpdate } = opts;
   const shellScript = path.join(
     getPackageRoot(),
     'scripts',
@@ -128,12 +134,12 @@ export async function runMacosTestflightScript(opts) {
     throw new Error(`Missing script: ${shellScript}`);
   }
 
-  const m = getMacosTestflight(appDir);
+  const m = getMacosTestflight(appDir, configPath);
   let cleanup = async () => {};
 
   const baseEnv = {
     ...process.env,
-    ...loadMacosEnvFromConfig(appDir),
+    ...loadMacosEnvFromConfig(appDir, configPath),
   };
 
   if (!buildOnly && m.app_store_key_json_path) {

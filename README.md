@@ -2,7 +2,7 @@
 
 Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/) or [Loadly](https://loadly.io/)), optional **Telegram** notifications (including Android direct APK delivery), **version bump** (`--bump-version`), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering log + tester doc listing **PR title + description** per `(#N)` commit, grouped by app vs submodules).
 
-Configuration lives in a single file at the **Flutter app root**: `tunai_build_script_config.json`.
+Configuration lives in a single file at the **Flutter app root**: `tunai_build_script_config.json`, or pass **`--config <path>`** to use a file outside the repo (e.g. gitignored credentials per branch).
 
 ## Install from Git
 
@@ -48,6 +48,7 @@ Plist templates: `example/example_export_options_ios.plist` (IPA export), `examp
 ```bash
 # iOS / Android — from app repo (walks up to find tunai_build_script_config.json)
 tunai-build-script
+tunai-build-script --config ~/secrets/staging.json --project-root .
 tunai-build-script --platform ios --no-update
 tunai-build-script --upload
 tunai-build-script --upload-changelog CHANGELOG.md
