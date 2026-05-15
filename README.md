@@ -1,6 +1,6 @@
 # tunai-build-script
 
-Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/) or [Loadly](https://loadly.io/)), optional **Telegram** notifications (including Android direct APK delivery), **version bump** (`--bump-version`), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering log + tester doc listing **PR title + description** per `(#N)` commit, grouped by app vs submodules).
+Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/) or [Loadly](https://loadly.io/)), optional **Telegram** notifications (including Android direct APK delivery), **version bump** (`--bump-version`), **release prep** (`--prepare-release`: bump, changelog, commit, push, tag), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering log + tester doc listing **PR title + description** per `(#N)` commit, grouped by app vs submodules).
 
 Configuration lives in a single file at the **Flutter app root**: `tunai_build_script_config.json`, or pass **`--config <path>`** to use a file outside the repo (e.g. gitignored credentials per branch).
 
@@ -60,6 +60,12 @@ tunai-build-script --bump-version patch
 tunai-build-script --bump-version manual 1.2.3+5 --project-root /path/to/app
 tunai-build-script --bump-version major --yes
 
+# Prepare release (bump + changelog + git commit/push + tag; no config required)
+tunai-build-script --prepare-release patch
+tunai-build-script --prepare-release build --project-root /path/to/app
+tunai-build-script --prepare-release patch --tag-prefix release --changelog-from v1.0.0
+tunai-build-script --prepare-release build --tag-prefix "" --changelog-from v1.0.0+10
+
 # macOS TestFlight
 tunai-build-script --platform macos
 tunai-build-script --platform macos --build-only
@@ -74,6 +80,41 @@ tunai-build-script --generate-changelog --no-fetch-github-pr v1.0.0 HEAD
 ```
 
 Run **`tunai-build-script -help`** for the full option list.
+
+### Prepare release (`--prepare-release`)
+
+Chains **version bump → changelog → git commit → push → annotated tag → push tag** in one command. Does **not** need `tunai_build_script_config.json`. Requires **`pubspec.yaml`**, **git** on `PATH`, and a **clean working tree** (commit or stash other changes first).
+
+| Step | What happens |
+|------|----------------|
+| 1 | Bump `major` \| `minor` \| `patch` \| `build` \| `manual` (same as `--bump-version`; `manual` needs a version, e.g. `1.2.3+5`) |
+| 2 | Write **`changelog.md`** and **`changelog_tester.md`** (same content as `--generate-changelog` defaults) |
+| 3 | Commit version files + changelogs (`chore(release): v{version}`) |
+| 4 | `git push` |
+| 5 | Create annotated tag from pubspec version |
+| 6 | `git push origin <tag>` |
+
+**Bump behaviour:** For `major` / `minor` / `patch`, the **build number is always incremented** (equivalent to `--yes` on `--bump-version`). `build` only bumps the build number.
+
+**Git tag naming:** Version from `pubspec.yaml` is tagged as `v1.0.1+11`. Optional prefix: `--tag-prefix release` → `release-v1.0.1+11`. No prefix → `v1.0.1+11` only.
+
+**Interactive (TTY):** Prompts for changelog **from** / **to** revisions (defaults: latest tag → `HEAD`) and tag prefix (empty = `v{version}` only).
+
+**Non-interactive:** Pass **`--changelog-from`** (e.g. last release tag) and **`--tag-prefix`** (use `""` for no prefix). **`--changelog-to`** defaults to `HEAD`.
+
+```bash
+# Interactive
+tunai-build-script --prepare-release patch
+
+# CI / script
+tunai-build-script --prepare-release patch \
+  --changelog-from v1.0.0 \
+  --tag-prefix release
+```
+
+**Rollback:** On failure after the bump starts, the CLI restores snapshotted files, deletes a local tag if one was created, and `git reset --hard` to the pre-run `HEAD` if a commit was made. If **`git push`** already succeeded, you may need to fix the remote manually.
+
+Cannot be combined with `--platform`, `--upload`, or `--bump-version`.
 
 ### Changelog generation (`--generate-changelog`)
 

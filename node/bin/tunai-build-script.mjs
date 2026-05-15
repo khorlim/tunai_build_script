@@ -10,6 +10,7 @@ import { performBuild, performUpload } from '../lib/build.mjs';
 import { sendTelegramMessage, sendTelegramDocument } from '../lib/telegram.mjs';
 import { bumpVersion } from '../lib/bump.mjs';
 import { runMacosTestflightScript } from '../lib/macos-testflight.mjs';
+import { runPrepareRelease } from '../lib/prepare-release.mjs';
 
 const BUMP_TYPES = new Set(['major', 'minor', 'patch', 'build', 'manual']);
 
@@ -17,13 +18,18 @@ function usage() {
   console.log(`Usage: tunai-build-script [options]
 
   Config: ${CONFIG_FILENAME} is resolved from cwd or a parent, or pass --config <path>. Not required for
-  --bump-version (needs pubspec.yaml), --platform macos (needs macos/ or --project-root), or --generate-changelog.
+  --bump-version, --prepare-release (needs pubspec.yaml + git), --platform macos (needs macos/ or --project-root),
+  or --generate-changelog.
 
 Options:
   --config <path>               Config JSON file (absolute or relative). Paths inside config are relative to
                                 --project-root or the discovered Flutter app root (pubspec.yaml).
   --platform ios|android|macos   iOS/Android: build & upload (apphost/loadly/telegram_apk via config). macos: TestFlight script.
   --bump-version <type> [ver]   major | minor | patch | build | manual (manual needs e.g. 1.2.3+5)
+  --prepare-release <type> [ver]  Bump (always includes build #), changelog, commit, push, tag, push tag
+  --tag-prefix <prefix>         With --prepare-release: tag prefix (non-interactive: required; "" for v1.0.0+1 only)
+  --changelog-from <rev>        With --prepare-release: changelog start (non-interactive: required)
+  --changelog-to <rev>          With --prepare-release: changelog end (default: HEAD)
   --upload                      Upload only (iOS/Android), no build
   --no-update                   Skip git pull, submodule update, flutter pub get (iOS/Android)
   --upload-changelog <path>     Relative path; overrides config upload.changelog_path
@@ -68,6 +74,9 @@ Examples:
   tunai-build-script --platform macos --build-only
   tunai-build-script --bump-version patch
   tunai-build-script --bump-version manual 1.2.3+5 --project-root /path/to/app
+  tunai-build-script --prepare-release patch
+  tunai-build-script --prepare-release patch --tag-prefix release --changelog-from v1.0.0
+  tunai-build-script --prepare-release build --tag-prefix "" --changelog-from v1.0.0+10
   tunai-build-script --config ~/secrets/staging.json --project-root /path/to/app
   tunai-build-script --generate-changelog
   tunai-build-script --generate-changelog v1.0.0 HEAD
@@ -103,6 +112,11 @@ function parseArgs(argv) {
     config: null,
     bumpType: null,
     manualVersion: null,
+    prepareReleaseType: null,
+    prepareReleaseManualVersion: null,
+    tagPrefix: null,
+    changelogFrom: null,
+    changelogTo: null,
     bumpYes: false,
     bumpNoBumpBuild: false,
     platform: null,
@@ -154,6 +168,50 @@ function parseArgs(argv) {
           );
           process.exit(1);
         }
+      }
+    } else if (a === '--prepare-release') {
+      const t = argv[++i];
+      if (!t || t.startsWith('-')) {
+        console.error(
+          'Error: --prepare-release requires major|minor|patch|build|manual',
+        );
+        process.exit(1);
+      }
+      out.prepareReleaseType = t.toLowerCase();
+      if (!BUMP_TYPES.has(out.prepareReleaseType)) {
+        console.error(`Error: invalid release type "${out.prepareReleaseType}"`);
+        process.exit(1);
+      }
+      if (out.prepareReleaseType === 'manual') {
+        out.prepareReleaseManualVersion = argv[++i];
+        if (
+          !out.prepareReleaseManualVersion ||
+          out.prepareReleaseManualVersion.startsWith('-')
+        ) {
+          console.error(
+            'Error: --prepare-release manual requires a version like 1.2.3+5',
+          );
+          process.exit(1);
+        }
+      }
+    } else if (a === '--tag-prefix') {
+      const v = argv[++i];
+      if (v === undefined) {
+        console.error('Error: --tag-prefix requires a value (use "" for none)');
+        process.exit(1);
+      }
+      out.tagPrefix = v;
+    } else if (a === '--changelog-from') {
+      out.changelogFrom = argv[++i];
+      if (!out.changelogFrom || out.changelogFrom.startsWith('-')) {
+        console.error('Error: --changelog-from requires a revision');
+        process.exit(1);
+      }
+    } else if (a === '--changelog-to') {
+      out.changelogTo = argv[++i];
+      if (!out.changelogTo || out.changelogTo.startsWith('-')) {
+        console.error('Error: --changelog-to requires a revision');
+        process.exit(1);
       }
     } else if (a === '--upload') out.uploadOnly = true;
     else if (a === '--no-update') out.noUpdate = true;
@@ -288,7 +346,40 @@ function resolveMacosAppDir(explicitProjectRoot) {
 }
 
 function validateNoMix(args, mode) {
+  if (mode === 'prepare-release') {
+    const conflicts = [
+      ['platform', 'Error: do not use --platform with --prepare-release'],
+      ['uploadOnly', 'Error: do not use --upload with --prepare-release'],
+      [
+        'testTelegram',
+        'Error: do not combine --prepare-release with --test-telegram / --test-upload-file',
+      ],
+      [
+        'testUploadFile',
+        'Error: do not combine --prepare-release with --test-telegram / --test-upload-file',
+      ],
+      [
+        'macosBuildOnly',
+        'Error: --build-only / --repo-update are only for --platform macos',
+      ],
+      [
+        'macosRepoUpdate',
+        'Error: --build-only / --repo-update are only for --platform macos',
+      ],
+      ['bumpType', 'Error: use --prepare-release or --bump-version, not both'],
+    ];
+    for (const [key, msg] of conflicts) {
+      if (args[key]) {
+        console.error(msg);
+        process.exit(1);
+      }
+    }
+  }
   if (mode === 'bump') {
+    if (args.prepareReleaseType) {
+      console.error('Error: use --prepare-release or --bump-version, not both');
+      process.exit(1);
+    }
     if (args.platform) {
       console.error('Error: do not use --platform with --bump-version');
       process.exit(1);
@@ -326,8 +417,10 @@ function validateNoMix(args, mode) {
       );
       process.exit(1);
     }
-    if (args.bumpType) {
-      console.error('Error: do not combine --platform macos with --bump-version');
+    if (args.bumpType || args.prepareReleaseType) {
+      console.error(
+        'Error: do not combine --platform macos with --bump-version or --prepare-release',
+      );
       process.exit(1);
     }
     if (args.testTelegram || args.testUploadFile) {
@@ -353,13 +446,31 @@ async function main() {
     return;
   }
 
-  const mode = args.bumpType
-    ? 'bump'
-    : args.platform === 'macos'
-      ? 'macos'
-      : 'build';
+  const mode = args.prepareReleaseType
+    ? 'prepare-release'
+    : args.bumpType
+      ? 'bump'
+      : args.platform === 'macos'
+        ? 'macos'
+        : 'build';
 
   validateNoMix(args, mode);
+
+  if (mode === 'prepare-release') {
+    const root = resolvePubspecRoot(args.projectRoot);
+    console.log(
+      `Prepare release (${args.prepareReleaseType}) in: ${path.resolve(root)}`,
+    );
+    await runPrepareRelease({
+      projectRoot: root,
+      bumpType: args.prepareReleaseType,
+      manualVersion: args.prepareReleaseManualVersion,
+      changelogFrom: args.changelogFrom,
+      changelogTo: args.changelogTo,
+      tagPrefix: args.tagPrefix,
+    });
+    return;
+  }
 
   if (mode === 'bump') {
     const root = resolvePubspecRoot(args.projectRoot);

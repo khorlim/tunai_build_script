@@ -207,4 +207,5 @@ export async function bumpVersion({
   }
 
   console.log('\nVersion bump completed successfully!');
+  return { previousVersion: currentVersion, newVersion };
 }
