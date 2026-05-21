@@ -66,6 +66,25 @@ export function getLoadlySection(config) {
 }
 
 /** @param {ReturnType<typeof loadConfigFile>} config */
+export function getBuildportSection(config) {
+  const b = config?.buildport;
+  const apiToken =
+    (typeof b?.api_token === 'string' ? b.api_token.trim() : '') ||
+    process.env.BUILDPORT_API_TOKEN?.trim() ||
+    '';
+  if (!apiToken) return null;
+
+  const t = b?.timeout_seconds;
+  const timeoutSeconds =
+    typeof t === 'number' && t >= 60 && t <= 1800 ? t : 600;
+
+  return {
+    api_token: apiToken,
+    timeout_seconds: timeoutSeconds,
+  };
+}
+
+/** @param {ReturnType<typeof loadConfigFile>} config */
 export function getTelegramSection(config) {
   const t = config?.telegram;
   if (!t || typeof t !== 'object') return null;

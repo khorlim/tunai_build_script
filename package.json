@@ -1,7 +1,7 @@
 {
   "name": "tunai-build-script",
   "version": "2.0.0",
-  "description": "Flutter build, apphost or Loadly upload, Telegram notify, version bump, macOS TestFlight helpers",
+  "description": "Flutter build, apphost, Buildport, or Loadly upload, Telegram notify, version bump, macOS TestFlight helpers",
   "type": "module",
   "engines": {
     "node": ">=18.0.0"

@@ -24,7 +24,7 @@ function usage() {
 Options:
   --config <path>               Config JSON file (absolute or relative). Paths inside config are relative to
                                 --project-root or the discovered Flutter app root (pubspec.yaml).
-  --platform ios|android|macos   iOS/Android: build & upload (apphost/loadly/telegram_apk via config). macos: TestFlight script.
+  --platform ios|android|macos   iOS/Android: build & upload (apphost/buildport/loadly/telegram_apk via config). macos: TestFlight script.
   --bump-version <type> [ver]   major | minor | patch | build | manual (manual needs e.g. 1.2.3+5)
   --prepare-release <type> [ver]  Bump (always includes build #), changelog, commit, push, tag, push tag
   --tag-prefix <prefix>         With --prepare-release: tag prefix (non-interactive: required; "" for v1.0.0+1 only)

@@ -10,6 +10,10 @@
   "loadly": {
     "api_key": "your_loadly_api_key"
   },
+  "buildport": {
+    "api_token": "${BUILDPORT_API_TOKEN}",
+    "timeout_seconds": 600
+  },
   "apphost": {
     "user_id": "your_user_id",
     "app_id": "your_app_id",

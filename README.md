@@ -1,6 +1,6 @@
 # tunai-build-script
 
-Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/) or [Loadly](https://loadly.io/)), optional **Telegram** notifications (including Android direct APK delivery), **version bump** (`--bump-version`), **release prep** (`--prepare-release`: bump, changelog, commit, push, tag), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering log + tester doc listing **PR title + description** per `(#N)` commit, grouped by app vs submodules).
+Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/), [Buildport](https://support.tunai.io/buildport/), or [Loadly](https://loadly.io/)), optional **Telegram** notifications (including Android direct APK delivery), **version bump** (`--bump-version`), **release prep** (`--prepare-release`: bump, changelog, commit, push, tag), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering log + tester doc listing **PR title + description** per `(#N)` commit, grouped by app vs submodules).
 
 Configuration lives in a single file at the **Flutter app root**: `tunai_build_script_config.json`, or pass **`--config <path>`** to use a file outside the repo (e.g. gitignored credentials per branch).
 
@@ -31,8 +31,9 @@ Copy `example/tunai_build_script_config.example.json` to your Flutter project ro
 | Section | Purpose |
 |--------|---------|
 | `upload.providers` | Optional per-platform provider map, e.g. `{ "ios": "apphost", "android": "telegram_apk" }` |
-| `upload.provider` | Legacy/default provider fallback: `"apphost"` (default), `"loadly"`, or `"telegram_apk"` |
+| `upload.provider` | Legacy/default provider fallback: `"apphost"` (default), `"buildport"`, `"loadly"`, or `"telegram_apk"` |
 | `apphost` | Required when the selected provider is `apphost`: `user_id`, `app_id`, `key`, `ios_bundle_identifier`, `android_package_name` |
+| `buildport` | Required when the selected provider is `buildport`: `api_token` or env `BUILDPORT_API_TOKEN`. Optional: `timeout_seconds` (60–1800, default 600). Upload metadata is derived from app info: app display name/pubspec name, pubspec version, and pubspec description |
 | `loadly` | Required when the selected provider is `loadly`: `api_key` from [Loadly API](https://loadly.io/doc/view/api). Optional: `build_update_description`, `build_password`, `build_install_type`, `build_channel_shortcut`, `timeout_seconds` (60–1800, default 600) |
 | `telegram` | Optional for notifications; required when provider is `telegram_apk`. `bot_token`, `chat_id`, optional `topic_id`. Use `${ENV_VAR}` in strings to pull secrets from the environment |
 | `ios.export_options_plist` | Relative path to the plist passed to `flutter build ipa` (default `ios/ExportOptions.plist`) |
@@ -42,6 +43,8 @@ Copy `example/tunai_build_script_config.example.json` to your Flutter project ro
 Plist templates: `example/example_export_options_ios.plist` (IPA export), `example/example_export_options_macos.plist` (Mac App Store / TestFlight). App Store Connect API key JSON: `example/app_store_connect_api_key.example.json`.
 
 `telegram_apk` is Android-only and sends the built APK file directly to Telegram as a document.
+
+`buildport` uploads the generated `.apk` or `.ipa` to `https://support.tunai.io/buildport/api/releases` as multipart field `apps` and returns the tester share URL from the API response. It sends `app_group` from the platform display name (fallback: pubspec `name`), `release_version` from pubspec `version`, `title` from app name + version, and `notes` from pubspec `description`.
 
 ## Commands
 

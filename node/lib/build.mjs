@@ -1,14 +1,17 @@
 import fs from 'fs';
 import path from 'path';
+import { getAppInfo } from './app-info.mjs';
 import { runInherit } from './run.mjs';
-import { getAppName, getVersion } from './pubspec.mjs';
+import { getVersion } from './pubspec.mjs';
 import {
   getApphostSection,
+  getBuildportSection,
   getLoadlySection,
   getTelegramSection,
 } from './config.mjs';
 import { findAndroidBuildFile, findIpaFile } from './artifacts.mjs';
 import { uploadToApphost } from './apphost-upload.mjs';
+import { uploadToBuildport } from './buildport-upload.mjs';
 import { uploadToLoadly } from './loadly-upload.mjs';
 import { sendTelegramDocument, sendTelegramMessage } from './telegram.mjs';
 
@@ -45,11 +48,12 @@ export async function performUpload({
   const provider = resolveUploadProvider(config, platform);
   if (
     provider !== 'apphost' &&
+    provider !== 'buildport' &&
     provider !== 'loadly' &&
     provider !== 'telegram_apk'
   ) {
     console.error(
-      `Error: upload provider must be "apphost", "loadly", or "telegram_apk", got "${provider}"`,
+      `Error: upload provider must be "apphost", "buildport", "loadly", or "telegram_apk", got "${provider}"`,
     );
     process.exit(1);
   }
@@ -80,7 +84,8 @@ export async function performUpload({
     throw new Error(`Unknown platform: ${platform}`);
   }
 
-  const appName = getAppName(projectRoot) ?? 'App';
+  const appInfo = getAppInfo(projectRoot, platform);
+  const appName = appInfo.app_group || appInfo.name || 'App';
   const telegram = getTelegramSection(config);
   const topicId =
     topicIdOverride ||
@@ -133,7 +138,21 @@ export async function performUpload({
     console.log('Telegram APK delivery completed successfully!');
   } else {
     let installUrl;
-    if (provider === 'loadly') {
+    if (provider === 'buildport') {
+      const buildport = getBuildportSection(config);
+      if (!buildport) {
+        console.error(
+          'Error: upload provider is "buildport" but buildport.api_token or BUILDPORT_API_TOKEN is missing',
+        );
+        process.exit(1);
+      }
+      installUrl = await uploadToBuildport({
+        buildFilePath,
+        version,
+        appInfo,
+        buildport,
+      });
+    } else if (provider === 'loadly') {
       const loadly = getLoadlySection(config);
       if (!loadly) {
         console.error(
