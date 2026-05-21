@@ -80,6 +80,10 @@ export function getBuildportSection(config) {
 
   return {
     api_token: apiToken,
+    app_group:
+      typeof b?.app_group === 'string' && b.app_group.trim()
+        ? b.app_group.trim()
+        : undefined,
     timeout_seconds: timeoutSeconds,
   };
 }

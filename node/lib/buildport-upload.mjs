@@ -15,6 +15,7 @@ const UPLOAD_URL = 'https://support.tunai.io/buildport/api/releases';
  * }} params.appInfo
  * @param {{
  *   api_token: string,
+ *   app_group?: string,
  *   timeout_seconds: number,
  * }} params.buildport
  * @returns {Promise<string>} Tester share URL
@@ -37,7 +38,7 @@ export async function uploadToBuildport({
   }
 
   const form = new FormData();
-  const appGroup = appInfo.app_group;
+  const appGroup = buildport.app_group || appInfo.app_group;
   const releaseVersion = appInfo.release_version || version;
   const title = appInfo.title || appGroup || 'App';
   const notes = appInfo.notes;

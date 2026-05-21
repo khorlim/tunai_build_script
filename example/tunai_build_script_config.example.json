@@ -12,6 +12,7 @@
   },
   "buildport": {
     "api_token": "${BUILDPORT_API_TOKEN}",
+    "app_group": "",
     "timeout_seconds": 600
   },
   "apphost": {

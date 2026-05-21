@@ -106,7 +106,7 @@ export function getAppInfo(projectRoot, platform) {
   return {
     name: pubspecName,
     display_name: displayName,
-    app_group: appName,
+    app_group: pubspecName || appName,
     release_version: version,
     title: `${appName} ${version ?? ''}`.trim(),
     notes: description || undefined,
