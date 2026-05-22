@@ -30,12 +30,53 @@ function resolveUploadProvider(config, platform) {
   return String(raw).toLowerCase();
 }
 
+function findBuildArtifact(projectRoot, platform) {
+  if (platform === 'ios') {
+    return {
+      path: findIpaFile(projectRoot),
+      missingMessage:
+        'Could not find IPA file in build/ios/ipa after a successful iOS build',
+      foundMessage: 'Found IPA file',
+    };
+  }
+
+  if (platform === 'android') {
+    return {
+      path: findAndroidBuildFile(projectRoot),
+      missingMessage:
+        'Could not find AAB/APK under build/app/outputs after a successful Android build',
+      foundMessage: 'Found Android build file',
+    };
+  }
+
+  throw new Error(`Unknown platform: ${platform}`);
+}
+
+function resolveUploadBuildFile(projectRoot, platform, explicitBuildFilePath) {
+  if (explicitBuildFilePath) {
+    if (!fs.existsSync(explicitBuildFilePath)) {
+      console.error(`Error: Build file not found: ${explicitBuildFilePath}`);
+      process.exit(1);
+    }
+    return explicitBuildFilePath;
+  }
+
+  const artifact = findBuildArtifact(projectRoot, platform);
+  if (!artifact.path) {
+    console.error(`Error: ${artifact.missingMessage}`);
+    process.exit(1);
+  }
+  console.log(`${artifact.foundMessage}: ${artifact.path}`);
+  return artifact.path;
+}
+
 export async function performUpload({
   projectRoot,
   config,
   platform,
   changelogRelativePath,
   topicIdOverride,
+  buildFilePath,
 }) {
   console.log(`Starting the upload process for ${platform}...`);
 
@@ -58,31 +99,11 @@ export async function performUpload({
     process.exit(1);
   }
 
-  let buildFilePath;
-
-  if (platform === 'ios') {
-    const ipa = findIpaFile(projectRoot);
-    if (!ipa) {
-      console.error(
-        'Error: Could not find IPA file in build/ios/ipa — build the iOS IPA first',
-      );
-      process.exit(1);
-    }
-    buildFilePath = ipa;
-    console.log(`Found IPA file: ${buildFilePath}`);
-  } else if (platform === 'android') {
-    const androidFile = findAndroidBuildFile(projectRoot);
-    if (!androidFile) {
-      console.error(
-        'Error: Could not find AAB/APK under build/app/outputs — build Android first',
-      );
-      process.exit(1);
-    }
-    buildFilePath = androidFile;
-    console.log(`Found Android build file: ${buildFilePath}`);
-  } else {
-    throw new Error(`Unknown platform: ${platform}`);
-  }
+  const resolvedBuildFilePath = resolveUploadBuildFile(
+    projectRoot,
+    platform,
+    buildFilePath,
+  );
 
   const appInfo = getAppInfo(projectRoot, platform);
   const appName = appInfo.app_group || appInfo.name || 'App';
@@ -112,7 +133,7 @@ export async function performUpload({
       botToken: telegram.bot_token,
       chatId: telegram.chat_id,
       topicId,
-      filePath: buildFilePath,
+      filePath: resolvedBuildFilePath,
       caption:
         `📦 Android APK\n\n` +
         `App: ${appName}\n` +
@@ -147,7 +168,7 @@ export async function performUpload({
         process.exit(1);
       }
       installUrl = await uploadToBuildport({
-        buildFilePath,
+        buildFilePath: resolvedBuildFilePath,
         version,
         appInfo,
         buildport,
@@ -160,7 +181,10 @@ export async function performUpload({
         );
         process.exit(1);
       }
-      installUrl = await uploadToLoadly({ buildFilePath, loadly });
+      installUrl = await uploadToLoadly({
+        buildFilePath: resolvedBuildFilePath,
+        loadly,
+      });
     } else {
       const apphost = getApphostSection(config);
       if (!apphost) {
@@ -191,7 +215,7 @@ export async function performUpload({
 
       installUrl = await uploadToApphost({
         platform,
-        buildFilePath,
+        buildFilePath: resolvedBuildFilePath,
         version,
         bundleIdentifier,
         apphost: {
@@ -330,12 +354,19 @@ export async function performBuild({
       throw new Error(`flutter build failed with exit code ${buildExit}`);
     }
 
+    const artifact = findBuildArtifact(projectRoot, platform);
+    if (!artifact.path) {
+      throw new Error(artifact.missingMessage);
+    }
+    console.log(`${artifact.foundMessage}: ${artifact.path}`);
+
     await performUpload({
       projectRoot,
       config,
       platform,
       changelogRelativePath,
       topicIdOverride,
+      buildFilePath: artifact.path,
     });
 
     console.log('Build and upload process completed successfully!');
@@ -343,6 +374,9 @@ export async function performBuild({
   } catch (e) {
     errorMessage = String(e?.message ?? e);
     console.error(`An error occurred during build: ${errorMessage}`);
+    console.error(
+      'Upload skipped because the build did not complete successfully.',
+    );
   }
 
   if (!buildSuccess) {
