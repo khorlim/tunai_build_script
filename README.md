@@ -32,6 +32,7 @@ Copy `example/tunai_build_script_config.example.json` to your Flutter project ro
 |--------|---------|
 | `upload.providers` | Optional per-platform provider map, e.g. `{ "ios": "apphost", "android": "telegram_apk" }` |
 | `upload.provider` | Legacy/default provider fallback: `"apphost"` (default), `"buildport"`, `"loadly"`, or `"telegram_apk"` |
+| `prepare_release` | Optional defaults for `--prepare-release`, including `tag_prefix` (`"release"` → `release-v1.0.1+11`, `""` → `v1.0.1+11`) |
 | `apphost` | Required when the selected provider is `apphost`: `user_id`, `app_id`, `key`, `ios_bundle_identifier`, `android_package_name` |
 | `buildport` | Required when the selected provider is `buildport`: `api_token` or env `BUILDPORT_API_TOKEN`. Optional: `app_group` (defaults to pubspec `name`), `timeout_seconds` (60–1800, default 600). Other upload metadata is derived from app info: pubspec version, platform display name, and pubspec description |
 | `loadly` | Required when the selected provider is `loadly`: `api_key` from [Loadly API](https://loadly.io/doc/view/api). Optional: `build_update_description`, `build_password`, `build_install_type`, `build_channel_shortcut`, `timeout_seconds` (60–1800, default 600) |
@@ -63,7 +64,7 @@ tunai-build-script --bump-version patch
 tunai-build-script --bump-version manual 1.2.3+5 --project-root /path/to/app
 tunai-build-script --bump-version major --yes
 
-# Prepare release (bump + changelog + git commit/push + tag; no config required)
+# Prepare release (bump + changelog + git commit/push + tag; config optional)
 tunai-build-script --prepare-release patch
 tunai-build-script --prepare-release build --project-root /path/to/app
 tunai-build-script --prepare-release patch --tag-prefix release --changelog-from v1.0.0
@@ -86,7 +87,7 @@ Run **`tunai-build-script -help`** for the full option list.
 
 ### Prepare release (`--prepare-release`)
 
-Chains **version bump → changelog → git commit → push → annotated tag → push tag** in one command. Does **not** need `tunai_build_script_config.json`. Requires **`pubspec.yaml`**, **git** on `PATH`, and a **clean working tree** (commit or stash other changes first).
+Chains **version bump → changelog → git commit → push → annotated tag → push tag** in one command. Does **not** require `tunai_build_script_config.json`, but uses `prepare_release.tag_prefix` when config is present. Requires **`pubspec.yaml`**, **git** on `PATH`, and a **clean working tree** (commit or stash other changes first).
 
 | Step | What happens |
 |------|----------------|
@@ -99,11 +100,13 @@ Chains **version bump → changelog → git commit → push → annotated tag �
 
 **Bump behaviour:** For `major` / `minor` / `patch`, the **build number is always incremented** (equivalent to `--yes` on `--bump-version`). `build` only bumps the build number.
 
-**Git tag naming:** Version from `pubspec.yaml` is tagged as `v1.0.1+11`. Optional prefix: `--tag-prefix release` → `release-v1.0.1+11`. No prefix → `v1.0.1+11` only.
+**Git tag naming:** Version from `pubspec.yaml` is tagged as `v1.0.1+11` by default. Optional prefix: `prepare_release.tag_prefix: "release"` or `--tag-prefix release` → `release-v1.0.1+11`. Set the config value or CLI value to `""`, or omit it, for no prefix.
 
-**Interactive (TTY):** Prompts for changelog **from** / **to** revisions (defaults: latest tag → `HEAD`) and tag prefix (empty = `v{version}` only).
+**Changelog FROM default:** If no tag prefix is configured, the default is the latest reachable tag. If a prefix is configured, the CLI first looks for the latest reachable matching tag (`release` → `release-v*`) and falls back to the latest reachable tag when no matching tag exists.
 
-**Non-interactive:** Pass **`--changelog-from`** (e.g. last release tag) and **`--tag-prefix`** (use `""` for no prefix). **`--changelog-to`** defaults to `HEAD`.
+**Interactive (TTY):** Prompts for changelog **from** / **to** revisions using the prefix-aware default above. It does not prompt for tag prefix; configure `prepare_release.tag_prefix` or pass `--tag-prefix` when you need one.
+
+**Non-interactive:** Provide tag prefix with either `prepare_release.tag_prefix` in config or **`--tag-prefix`** only when you need one. **`--changelog-from`** can be omitted and will use the prefix-aware default above. **`--changelog-to`** defaults to `HEAD`.
 
 ```bash
 # Interactive

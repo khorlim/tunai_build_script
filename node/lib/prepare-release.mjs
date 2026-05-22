@@ -7,7 +7,11 @@ import {
   generateChangelogMarkdown,
   generateTesterChangelogMarkdown,
 } from './generate-changelog.mjs';
-import { runGit, getLastTag } from './changelog/changelog-git.mjs';
+import {
+  runGit,
+  getLastTag,
+  getLastTagMatchingPrefix,
+} from './changelog/changelog-git.mjs';
 import { getVersion } from './pubspec.mjs';
 
 const ENGINEERING_CHANGELOG = 'changelog.md';
@@ -100,6 +104,31 @@ async function promptLine(question, defaultValue = '') {
 
 /**
  * @param {string} projectRoot
+ * @param {string} tagPrefix
+ */
+async function resolveDefaultChangelogFrom(projectRoot, tagPrefix) {
+  const prefix = tagPrefix?.trim() ?? '';
+  const lastTag = await getLastTag(projectRoot);
+  if (!prefix) {
+    return {
+      fromRev: lastTag || 'HEAD',
+      lastTag,
+      prefixedTag: null,
+      usedPrefix: false,
+    };
+  }
+
+  const prefixedTag = await getLastTagMatchingPrefix(projectRoot, prefix);
+  return {
+    fromRev: prefixedTag || lastTag || 'HEAD',
+    lastTag,
+    prefixedTag,
+    usedPrefix: true,
+  };
+}
+
+/**
+ * @param {string} projectRoot
  */
 async function assertGitRepo(projectRoot) {
   const r = await runGit(projectRoot, ['rev-parse', '--is-inside-work-tree']);
@@ -150,38 +179,58 @@ async function resolveChangelogAndTagOptions(opts) {
   /** @type {string | null} null = prompt; undefined = use empty prefix */
   let tagPrefix = opts.tagPrefix;
 
+  if (interactive && tagPrefix === null) {
+    tagPrefix = await promptLine(
+      'Git tag prefix (empty = v{version} only, e.g. release → release-v{version})',
+      '',
+    );
+  }
+
   if (!interactive) {
-    if (!changelogFrom) {
-      throw new Error(
-        'Non-interactive mode requires --changelog-from <rev> (e.g. last release tag).',
-      );
-    }
     if (tagPrefix === null) {
       throw new Error(
-        'Non-interactive mode requires --tag-prefix <prefix> (use empty string for v1.0.0+1 style only).',
+        'Non-interactive mode requires --tag-prefix <prefix> or prepare_release.tag_prefix in config (use empty string for v1.0.0+1 style only).',
       );
+    }
+    if (!changelogFrom) {
+      const resolved = await resolveDefaultChangelogFrom(
+        projectRoot,
+        tagPrefix ?? '',
+      );
+      changelogFrom = resolved.fromRev;
     }
     changelogTo = changelogTo || 'HEAD';
     return { changelogFrom, changelogTo, tagPrefix: tagPrefix ?? '' };
   }
 
-  const lastTag = await getLastTag(projectRoot);
   if (!changelogFrom) {
-    if (lastTag) {
-      console.log(`Last tag: ${lastTag}`);
-      changelogFrom = await promptLine('Changelog FROM revision', lastTag);
+    const resolved = await resolveDefaultChangelogFrom(
+      projectRoot,
+      tagPrefix ?? '',
+    );
+    if (resolved.usedPrefix && resolved.prefixedTag) {
+      console.log(
+        `Last tag matching prefix "${tagPrefix}": ${resolved.prefixedTag}`,
+      );
+    } else if (resolved.usedPrefix && resolved.lastTag) {
+      console.log(
+        `No tag matching prefix "${tagPrefix}". Falling back to last tag: ${resolved.lastTag}`,
+      );
+    } else if (resolved.lastTag) {
+      console.log(`Last tag: ${resolved.lastTag}`);
+    }
+
+    if (resolved.fromRev) {
+      changelogFrom = await promptLine(
+        'Changelog FROM revision',
+        resolved.fromRev,
+      );
     } else {
       changelogFrom = await promptLine('Changelog FROM revision', 'HEAD');
     }
   }
   if (!changelogTo) {
     changelogTo = await promptLine('Changelog TO revision', 'HEAD');
-  }
-  if (tagPrefix === null) {
-    tagPrefix = await promptLine(
-      'Git tag prefix (empty = v{version} only, e.g. release → release-v{version})',
-      '',
-    );
   }
 
   return {

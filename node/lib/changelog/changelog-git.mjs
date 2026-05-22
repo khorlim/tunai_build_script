@@ -151,6 +151,26 @@ export async function getLastTag(projectRoot) {
   return t || null;
 }
 
+/**
+ * @param {string} projectRoot
+ * @param {string} prefix
+ */
+export async function getLastTagMatchingPrefix(projectRoot, prefix) {
+  const trimmed = prefix?.trim() ?? '';
+  if (!trimmed) return getLastTag(projectRoot);
+
+  const r = await runGit(projectRoot, [
+    'describe',
+    '--tags',
+    '--abbrev=0',
+    '--match',
+    `${trimmed}-v*`,
+  ]);
+  if (r.code !== 0) return null;
+  const t = r.stdout.trim();
+  return t || null;
+}
+
 export async function getCurrentCommitSha(projectRoot) {
   const r = await runGit(projectRoot, ['rev-parse', '--short', 'HEAD']);
   if (r.code !== 0) return 'HEAD';

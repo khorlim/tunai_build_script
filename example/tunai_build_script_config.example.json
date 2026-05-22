@@ -7,6 +7,9 @@
     "provider": "apphost",
     "changelog_path": null
   },
+  "prepare_release": {
+    "tag_prefix": "release"
+  },
   "loadly": {
     "api_key": "your_loadly_api_key"
   },

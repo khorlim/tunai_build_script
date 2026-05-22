@@ -4,7 +4,11 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { findProjectWithConfig, CONFIG_FILENAME } from '../lib/find-project.mjs';
-import { loadConfigFile, getTelegramSection } from '../lib/config.mjs';
+import {
+  loadConfigFile,
+  getPrepareReleaseSection,
+  getTelegramSection,
+} from '../lib/config.mjs';
 import { detectPlatform } from '../lib/platform-detect.mjs';
 import { performBuild, performUpload } from '../lib/build.mjs';
 import { sendTelegramMessage, sendTelegramDocument } from '../lib/telegram.mjs';
@@ -27,8 +31,8 @@ Options:
   --platform ios|android|macos   iOS/Android: build & upload (apphost/buildport/loadly/telegram_apk via config). macos: TestFlight script.
   --bump-version <type> [ver]   major | minor | patch | build | manual (manual needs e.g. 1.2.3+5)
   --prepare-release <type> [ver]  Bump (always includes build #), changelog, commit, push, tag, push tag
-  --tag-prefix <prefix>         With --prepare-release: tag prefix (non-interactive: required; "" for v1.0.0+1 only)
-  --changelog-from <rev>        With --prepare-release: changelog start (non-interactive: required)
+  --tag-prefix <prefix>         With --prepare-release: tag prefix; overrides prepare_release.tag_prefix/default no prefix
+  --changelog-from <rev>        With --prepare-release: changelog start (default: prefix-matching tag or latest tag)
   --changelog-to <rev>          With --prepare-release: changelog end (default: HEAD)
   --upload                      Upload only (iOS/Android), no build
   --no-update                   Skip git pull, submodule update, flutter pub get (iOS/Android)
@@ -326,6 +330,34 @@ function resolveProjectRootWithConfig(explicitProjectRoot, explicitConfigPath) {
   return found;
 }
 
+function resolvePrepareReleaseContext(explicitProjectRoot, explicitConfigPath) {
+  if (explicitConfigPath) {
+    const configPath = resolveConfigFilePath(explicitConfigPath);
+    if (explicitProjectRoot) {
+      return {
+        projectRoot: resolvePubspecRoot(explicitProjectRoot),
+        configPath,
+      };
+    }
+
+    const pubInConfigDir = findPubspecRoot(path.dirname(configPath));
+    return {
+      projectRoot: pubInConfigDir || resolvePubspecRoot(null),
+      configPath,
+    };
+  }
+
+  const projectRoot = resolvePubspecRoot(explicitProjectRoot);
+  const configPath = path.join(projectRoot, CONFIG_FILENAME);
+  return {
+    projectRoot,
+    configPath:
+      fs.existsSync(configPath) && fs.statSync(configPath).isFile()
+        ? configPath
+        : null,
+  };
+}
+
 function resolveMacosAppDir(explicitProjectRoot) {
   if (explicitProjectRoot) {
     const r = path.resolve(explicitProjectRoot);
@@ -457,7 +489,19 @@ async function main() {
   validateNoMix(args, mode);
 
   if (mode === 'prepare-release') {
-    const root = resolvePubspecRoot(args.projectRoot);
+    const { projectRoot: root, configPath } = resolvePrepareReleaseContext(
+      args.projectRoot,
+      args.config,
+    );
+    let configTagPrefix = null;
+    if (configPath) {
+      console.log(`Using config: ${configPath}`);
+      const config = loadConfigFile(configPath);
+      const releaseConfig = getPrepareReleaseSection(config);
+      if (Object.prototype.hasOwnProperty.call(releaseConfig, 'tag_prefix')) {
+        configTagPrefix = releaseConfig.tag_prefix;
+      }
+    }
     console.log(
       `Prepare release (${args.prepareReleaseType}) in: ${path.resolve(root)}`,
     );
@@ -467,7 +511,7 @@ async function main() {
       manualVersion: args.prepareReleaseManualVersion,
       changelogFrom: args.changelogFrom,
       changelogTo: args.changelogTo,
-      tagPrefix: args.tagPrefix,
+      tagPrefix: args.tagPrefix ?? configTagPrefix ?? '',
     });
     return;
   }

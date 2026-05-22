@@ -101,3 +101,20 @@ export function getTelegramSection(config) {
     topic_id: t.topic_id?.trim() || undefined,
   };
 }
+
+/** @param {ReturnType<typeof loadConfigFile>} config */
+export function getPrepareReleaseSection(config) {
+  const r = config?.prepare_release;
+  if (!r || typeof r !== 'object') return {};
+
+  const out = {};
+  if (Object.prototype.hasOwnProperty.call(r, 'tag_prefix')) {
+    if (typeof r.tag_prefix !== 'string') {
+      throw new Error(
+        'prepare_release.tag_prefix must be a string (use "" for no prefix)',
+      );
+    }
+    out.tag_prefix = r.tag_prefix;
+  }
+  return out;
+}
