@@ -11,6 +11,7 @@ import {
 } from './config.mjs';
 import { findAndroidBuildFile, findIpaFile } from './artifacts.mjs';
 import { uploadToApphost } from './apphost-upload.mjs';
+import { collectBuildportChanges } from './buildport-changes.mjs';
 import { uploadToBuildport } from './buildport-upload.mjs';
 import { uploadToLoadly } from './loadly-upload.mjs';
 import { sendTelegramDocument, sendTelegramMessage } from './telegram.mjs';
@@ -167,11 +168,22 @@ export async function performUpload({
         );
         process.exit(1);
       }
+      const changes = await collectBuildportChanges({
+        projectRoot,
+        changesPath: buildport.changes_path,
+        warn: (msg) => console.warn(`Warning: ${msg}`),
+      });
+      if (changes.length) {
+        console.log(
+          `Sending ${changes.length} change${changes.length === 1 ? '' : 's'} from the tester changelog to Buildport`,
+        );
+      }
       installUrl = await uploadToBuildport({
         buildFilePath: resolvedBuildFilePath,
         version,
         appInfo,
         buildport,
+        changes,
       });
     } else if (provider === 'loadly') {
       const loadly = getLoadlySection(config);

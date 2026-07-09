@@ -85,6 +85,10 @@ export function getBuildportSection(config) {
         ? b.app_group.trim()
         : undefined,
     timeout_seconds: timeoutSeconds,
+    changes_path:
+      typeof b?.changes_path === 'string' && b.changes_path.trim()
+        ? b.changes_path.trim()
+        : undefined,
   };
 }
 

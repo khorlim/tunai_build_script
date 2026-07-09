@@ -18,6 +18,8 @@ const UPLOAD_URL = 'https://support.tunai.io/buildport/api/releases';
  *   app_group?: string,
  *   timeout_seconds: number,
  * }} params.buildport
+ * @param {{ text: string, pr_number?: string, pr_url?: string }[]} [params.changes]
+ *   Checklist entries shown on the tester page (usually one per PR).
  * @returns {Promise<string>} Tester share URL
  */
 export async function uploadToBuildport({
@@ -25,6 +27,7 @@ export async function uploadToBuildport({
   version,
   appInfo,
   buildport,
+  changes,
 }) {
   const apiToken = buildport.api_token;
   if (!apiToken) {
@@ -50,6 +53,9 @@ export async function uploadToBuildport({
   form.append('title', title);
   if (notes != null && notes !== '') {
     form.append('notes', notes);
+  }
+  if (Array.isArray(changes) && changes.length > 0) {
+    form.append('changes', JSON.stringify(changes));
   }
 
   const fileBytes = fs.readFileSync(buildFilePath);
