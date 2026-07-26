@@ -120,5 +120,16 @@ export function getPrepareReleaseSection(config) {
     }
     out.tag_prefix = r.tag_prefix;
   }
+  if (Object.prototype.hasOwnProperty.call(r, 'changelog_paths')) {
+    if (
+      !Array.isArray(r.changelog_paths) ||
+      r.changelog_paths.some((x) => typeof x !== 'string')
+    ) {
+      throw new Error(
+        'prepare_release.changelog_paths must be an array of git pathspec strings',
+      );
+    }
+    out.changelog_paths = r.changelog_paths;
+  }
   return out;
 }

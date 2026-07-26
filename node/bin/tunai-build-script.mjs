@@ -31,6 +31,8 @@ Options:
   --platform ios|android|macos   iOS/Android: build & upload (apphost/buildport/loadly/telegram_apk via config). macos: TestFlight script.
   --bump-version <type> [ver]   major | minor | patch | build | manual (manual needs e.g. 1.2.3+5)
   --prepare-release <type> [ver]  Bump (always includes build #), changelog, commit, push, tag, push tag
+  --test-release ios|android    One-liner testing build: channel switch (channel.test in config), build-number
+                                bump, scoped changelog, commit+tag+push, then build & upload. --dry-run previews.
   --tag-prefix <prefix>         With --prepare-release: tag prefix; overrides prepare_release.tag_prefix/default no prefix
   --changelog-from <rev>        With --prepare-release: changelog start (default: prefix-matching tag or latest tag)
   --changelog-to <rev>          With --prepare-release: changelog end (default: HEAD)
@@ -132,6 +134,8 @@ function parseArgs(argv) {
     topicId: null,
     testTelegram: false,
     testUploadFile: null,
+    testReleasePlatform: null,
+    dryRun: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -198,6 +202,15 @@ function parseArgs(argv) {
           process.exit(1);
         }
       }
+    } else if (a === '--test-release') {
+      const pl = argv[++i]?.toLowerCase();
+      if (pl !== 'ios' && pl !== 'android') {
+        console.error('Error: --test-release requires ios or android');
+        process.exit(1);
+      }
+      out.testReleasePlatform = pl;
+    } else if (a === '--dry-run') {
+      out.dryRun = true;
     } else if (a === '--tag-prefix') {
       const v = argv[++i];
       if (v === undefined) {
@@ -478,7 +491,9 @@ async function main() {
     return;
   }
 
-  const mode = args.prepareReleaseType
+  const mode = args.testReleasePlatform
+    ? 'test-release'
+    : args.prepareReleaseType
     ? 'prepare-release'
     : args.bumpType
       ? 'bump'
@@ -487,6 +502,89 @@ async function main() {
         : 'build';
 
   validateNoMix(args, mode);
+
+  if (mode === 'test-release') {
+    const { projectRoot, configPath } = resolveProjectRootWithConfig(
+      args.projectRoot,
+      args.config,
+    );
+    console.log(`Test release (${args.testReleasePlatform}) in: ${projectRoot}`);
+    console.log(`Using config: ${configPath}`);
+    const config = loadConfigFile(configPath);
+    const releaseConfig = getPrepareReleaseSection(config);
+    const channel = (config.channel && config.channel.test) || {};
+    const changelogPaths = Array.isArray(releaseConfig.changelog_paths)
+      ? releaseConfig.changelog_paths
+      : null;
+    const tagPrefix =
+      args.tagPrefix ??
+      (Object.prototype.hasOwnProperty.call(releaseConfig, 'tag_prefix')
+        ? releaseConfig.tag_prefix
+        : null);
+
+    if (args.testReleasePlatform === 'ios' && channel.ios_bundle_id) {
+      const channelFile = path.join(
+        projectRoot,
+        'ios',
+        'Flutter',
+        'channel.xcconfig',
+      );
+      const content =
+        `// Written by tunai-build-script (--test-release). Do not commit.\n` +
+        `PRODUCT_BUNDLE_IDENTIFIER = ${channel.ios_bundle_id}\n`;
+      fs.writeFileSync(channelFile, content, 'utf8');
+      console.log(
+        `Channel: test (iOS bundle id ${channel.ios_bundle_id})`,
+      );
+    }
+    if (channel.env_file) {
+      const src = path.join(projectRoot, channel.env_file);
+      if (!fs.existsSync(src)) {
+        console.error(`Error: channel.test.env_file not found: ${src}`);
+        process.exit(1);
+      }
+      fs.copyFileSync(src, path.join(projectRoot, '.env'));
+      console.log(`Channel: .env <- ${channel.env_file}`);
+    }
+
+    if (args.dryRun) {
+      console.log('\nDry run — would now:');
+      console.log(
+        `  1. prepare-release (build bump), tag prefix "${tagPrefix ?? ''}"` +
+          (changelogPaths
+            ? `, changelog scoped to: ${changelogPaths.join(' ')}`
+            : ''),
+      );
+      console.log(
+        `  2. build + upload ${args.testReleasePlatform} (no git pull/pub get)`,
+      );
+      return;
+    }
+
+    await runPrepareRelease({
+      projectRoot,
+      bumpType: 'build',
+      changelogFrom: args.changelogFrom,
+      changelogTo: args.changelogTo,
+      tagPrefix: tagPrefix ?? '',
+      changelogPaths,
+    });
+
+    const changelogEffective =
+      args.uploadChangelog ||
+      (config.upload && config.upload.changelog_path) ||
+      null;
+    await performBuild({
+      projectRoot,
+      config,
+      platform: args.testReleasePlatform,
+      update: false,
+      changelogRelativePath: changelogEffective,
+      topicIdOverride:
+        args.topicId || process.env.TELEGRAM_TOPIC_ID || undefined,
+    });
+    return;
+  }
 
   if (mode === 'prepare-release') {
     const { projectRoot: root, configPath } = resolvePrepareReleaseContext(
