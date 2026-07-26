@@ -14,7 +14,9 @@
     "scripts",
     "example"
   ],
-  "dependencies": {},
+  "dependencies": {
+    "undici": "^7.29.0"
+  },
   "keywords": [
     "flutter",
     "apphost",

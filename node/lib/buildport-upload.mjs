@@ -1,4 +1,6 @@
 import fs from 'fs';
+import { Agent } from 'undici';
+import { spawnSync } from 'child_process';
 import path from 'path';
 
 const UPLOAD_URL = 'https://support.tunai.io/buildport/api/releases';
@@ -63,14 +65,73 @@ export async function uploadToBuildport({
   form.append('apps', blob, path.basename(buildFilePath));
 
   console.log('Uploading to Buildport...');
-  const uploadResponse = await fetch(UPLOAD_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiToken}`,
-    },
-    body: form,
-    signal: AbortSignal.timeout(buildport.timeout_seconds * 1000),
+  const curlUpload = () => {
+    const curlArgs = [
+      '-sS',
+      '--max-time',
+      String(buildport.timeout_seconds),
+      '-H',
+      `Authorization: Bearer ${apiToken}`,
+      '-F',
+      `release_version=${releaseVersion}`,
+      '-F',
+      `title=${title}`,
+    ];
+    if (appGroup) curlArgs.push('-F', `app_group=${appGroup}`);
+    if (notes != null && notes !== '') curlArgs.push('-F', `notes=${notes}`);
+    if (Array.isArray(changes) && changes.length > 0) {
+      curlArgs.push('-F', `changes=${JSON.stringify(changes)}`);
+    }
+    curlArgs.push('-F', `apps=@${buildFilePath}`, UPLOAD_URL);
+    const r = spawnSync('curl', curlArgs, {
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    if (r.status !== 0) {
+      throw new Error(`curl upload failed: ${r.stderr?.trim() || r.status}`);
+    }
+    return r.stdout;
+  };
+  // undici's default headersTimeout (300s) fires independently of the abort
+  // signal; large IPAs can exceed it while Buildport processes the upload.
+  const timeoutMs = buildport.timeout_seconds * 1000;
+  const dispatcher = new Agent({
+    headersTimeout: timeoutMs,
+    bodyTimeout: timeoutMs,
   });
+  let uploadResponse = null;
+  try {
+    uploadResponse = await fetch(UPLOAD_URL, {
+      dispatcher,
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+      },
+      body: form,
+      signal: AbortSignal.timeout(buildport.timeout_seconds * 1000),
+    });
+  } catch (fetchErr) {
+    console.warn(
+      `Buildport fetch upload failed (${fetchErr?.cause?.code || fetchErr?.name || fetchErr}); falling back to curl…`,
+    );
+    const stdout = curlUpload();
+    let json = null;
+    try {
+      json = JSON.parse(stdout);
+    } catch {
+      throw new Error(
+        `Buildport curl upload: expected JSON response: ${stdout.slice(0, 500)}`,
+      );
+    }
+    const curlUrl = json?.url;
+    if (typeof curlUrl !== 'string' || !curlUrl.trim()) {
+      throw new Error(
+        `Buildport curl upload: response had no url: ${stdout.slice(0, 500)}`,
+      );
+    }
+    console.log('File uploaded successfully (curl fallback)');
+    return curlUrl.trim();
+  }
 
   const bodyText = await uploadResponse.text();
   let json = null;
