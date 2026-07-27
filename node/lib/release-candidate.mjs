@@ -87,6 +87,12 @@ export function prepareReleaseCandidate({
       'channel.prod.ios_bundle_id is required for --release-candidate ios',
     );
   }
+  const iosDisplayName = channel.ios_display_name?.trim();
+  if (!iosDisplayName || /[\r\n]/.test(iosDisplayName)) {
+    throw new Error(
+      'channel.prod.ios_display_name is required for --release-candidate ios',
+    );
+  }
 
   const exportOptionsRel =
     channel.ios_export_options_plist?.trim();
@@ -180,7 +186,8 @@ export function prepareReleaseCandidate({
     fs.writeFileSync(
       channelFile,
       `// Written by tunai-build-script (--release-candidate). Do not commit.\n` +
-        `PRODUCT_BUNDLE_IDENTIFIER = ${iosBundleId}\n`,
+        `PRODUCT_BUNDLE_IDENTIFIER = ${iosBundleId}\n` +
+        `APP_DISPLAY_NAME = ${iosDisplayName}\n`,
       'utf8',
     );
     fs.writeFileSync(envPath, envContent, 'utf8');
@@ -227,6 +234,7 @@ export function prepareReleaseCandidate({
   return {
     config: effectiveConfig,
     iosBundleId,
+    iosDisplayName,
     exportOptionsPath,
     envPath,
     channelFile,
@@ -255,6 +263,7 @@ function runCommand(command, args, options = {}) {
 export function validateIosReleaseCandidateArtifact({
   ipaPath,
   expectedBundleId,
+  expectedDisplayName,
 }) {
   const listing = runCommand('unzip', ['-Z1', ipaPath]);
   const entries = String(listing).split(/\r?\n/).filter(Boolean);
@@ -282,6 +291,18 @@ export function validateIosReleaseCandidateArtifact({
       `Release-candidate IPA bundle id is "${bundleId}", expected "${expectedBundleId}"`,
     );
   }
+  const displayName = String(
+    runCommand(
+      'plutil',
+      ['-extract', 'CFBundleDisplayName', 'raw', '-o', '-', '-'],
+      { input: infoPlist },
+    ),
+  ).trim();
+  if (displayName !== expectedDisplayName) {
+    throw new Error(
+      `Release-candidate IPA display name is "${displayName}", expected "${expectedDisplayName}"`,
+    );
+  }
 
   const envEntry = entries.find((entry) =>
     /\/flutter_assets\/\.env$/.test(entry),
@@ -299,5 +320,5 @@ export function validateIosReleaseCandidateArtifact({
     );
   }
 
-  return { bundleId, testVersion };
+  return { bundleId, displayName, testVersion };
 }

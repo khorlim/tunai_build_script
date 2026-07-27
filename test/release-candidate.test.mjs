@@ -66,6 +66,7 @@ function candidateConfig() {
     channel: {
       prod: {
         ios_bundle_id: 'com.example.app',
+        ios_display_name: 'Example',
         ios_export_options_plist:
           'ios/ExportOptions.prod-adhoc.plist',
         env_overrides: {
@@ -125,6 +126,13 @@ test('release candidate writes production channel and forces Buildport', (t) => 
       'utf8',
     ),
     /PRODUCT_BUNDLE_IDENTIFIER = com\.example\.app/,
+  );
+  assert.match(
+    fs.readFileSync(
+      path.join(projectRoot, 'ios', 'Flutter', 'channel.xcconfig'),
+      'utf8',
+    ),
+    /APP_DISPLAY_NAME = Example/,
   );
 });
 
@@ -206,6 +214,8 @@ test('IPA validation checks production bundle id and packaged env', (t) => {
 <dict>
   <key>CFBundleIdentifier</key>
   <string>com.example.app</string>
+  <key>CFBundleDisplayName</key>
+  <string>Example</string>
 </dict>
 </plist>
 `,
@@ -223,9 +233,11 @@ test('IPA validation checks production bundle id and packaged env', (t) => {
     validateIosReleaseCandidateArtifact({
       ipaPath,
       expectedBundleId: 'com.example.app',
+      expectedDisplayName: 'Example',
     }),
     {
       bundleId: 'com.example.app',
+      displayName: 'Example',
       testVersion: 'false',
     },
   );
@@ -234,6 +246,7 @@ test('IPA validation checks production bundle id and packaged env', (t) => {
       validateIosReleaseCandidateArtifact({
         ipaPath,
         expectedBundleId: 'com.example.other',
+        expectedDisplayName: 'Example',
       }),
     /expected "com\.example\.other"/,
   );

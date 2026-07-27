@@ -1,6 +1,6 @@
 {
   "name": "tunai-build-script",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Flutter build, tester distribution, release candidates, versioning, and macOS TestFlight helpers",
   "type": "module",
   "engines": {

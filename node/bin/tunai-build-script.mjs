@@ -609,6 +609,7 @@ async function main() {
         validateIosReleaseCandidateArtifact({
           ipaPath,
           expectedBundleId: candidate.iosBundleId,
+          expectedDisplayName: candidate.iosDisplayName,
         }),
     });
     return;
@@ -642,7 +643,10 @@ async function main() {
       );
       const content =
         `// Written by tunai-build-script (--test-release). Do not commit.\n` +
-        `PRODUCT_BUNDLE_IDENTIFIER = ${channel.ios_bundle_id}\n`;
+        `PRODUCT_BUNDLE_IDENTIFIER = ${channel.ios_bundle_id}\n` +
+        (channel.ios_display_name
+          ? `APP_DISPLAY_NAME = ${channel.ios_display_name}\n`
+          : '');
       fs.writeFileSync(channelFile, content, 'utf8');
       console.log(
         `Channel: test (iOS bundle id ${channel.ios_bundle_id})`,
