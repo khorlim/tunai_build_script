@@ -1,13 +1,16 @@
 {
   "name": "tunai-build-script",
-  "version": "2.0.0",
-  "description": "Flutter build, apphost, Buildport, or Loadly upload, Telegram notify, version bump, macOS TestFlight helpers",
+  "version": "2.1.0",
+  "description": "Flutter build, tester distribution, release candidates, versioning, and macOS TestFlight helpers",
   "type": "module",
   "engines": {
     "node": ">=18.0.0"
   },
   "bin": {
     "tunai-build-script": "node/bin/tunai-build-script.mjs"
+  },
+  "scripts": {
+    "test": "node --test"
   },
   "files": [
     "node",
@@ -21,6 +24,7 @@
     "flutter",
     "apphost",
     "build",
+    "release-candidate",
     "testflight"
   ],
   "license": "BSD-3-Clause",

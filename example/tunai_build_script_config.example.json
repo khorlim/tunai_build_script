@@ -10,6 +10,21 @@
   "prepare_release": {
     "tag_prefix": "release"
   },
+  "release_candidate": {
+    "tag_prefix": "my-app-rc"
+  },
+  "channel": {
+    "test": {
+      "ios_bundle_id": "com.example.app.test"
+    },
+    "prod": {
+      "ios_bundle_id": "com.example.app",
+      "ios_export_options_plist": "ios/ExportOptions.prod-adhoc.plist",
+      "env_overrides": {
+        "TestVersion": "false"
+      }
+    }
+  },
   "loadly": {
     "api_key": "your_loadly_api_key"
   },

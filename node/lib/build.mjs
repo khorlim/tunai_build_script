@@ -318,6 +318,7 @@ export async function performBuild({
   update,
   changelogRelativePath,
   topicIdOverride,
+  validateBuildArtifact,
 }) {
   let buildSuccess = false;
   let errorMessage;
@@ -371,6 +372,12 @@ export async function performBuild({
       throw new Error(artifact.missingMessage);
     }
     console.log(`${artifact.foundMessage}: ${artifact.path}`);
+
+    if (validateBuildArtifact) {
+      console.log('Validating the completed build artifact...');
+      await validateBuildArtifact(artifact.path);
+      console.log('Build artifact validation passed');
+    }
 
     await performUpload({
       projectRoot,

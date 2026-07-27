@@ -1,6 +1,6 @@
 # tunai-build-script
 
-Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/), [Buildport](https://support.tunai.io/buildport/), or [Loadly](https://loadly.io/)), optional **Telegram** notifications (including Android direct APK delivery), **version bump** (`--bump-version`), **release prep** (`--prepare-release`: bump, changelog, commit, push, tag), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering log + tester doc listing **PR title + description** per `(#N)` commit, grouped by app vs submodules).
+Node.js CLI for Flutter **iOS/Android build + distribution upload** ([appho.st](https://appho.st/), [Buildport](https://support.tunai.io/buildport/), or [Loadly](https://loadly.io/)), optional **Telegram** notifications (including Android direct APK delivery), production-configured iOS **release candidates** (`--release-candidate ios`), **version bump** (`--bump-version`), **release prep** (`--prepare-release`: bump, changelog, commit, push, tag), **macOS TestFlight** (`--platform macos`, via the bundled shell script), and **changelog generation** (`--generate-changelog`, engineering log + tester doc listing **PR title + description** per `(#N)` commit, grouped by app vs submodules).
 
 Configuration lives in a single file at the **Flutter app root**: `tunai_build_script_config.json`, or pass **`--config <path>`** to use a file outside the repo (e.g. gitignored credentials per branch).
 
@@ -33,6 +33,8 @@ Copy `example/tunai_build_script_config.example.json` to your Flutter project ro
 | `upload.providers` | Optional per-platform provider map, e.g. `{ "ios": "apphost", "android": "telegram_apk" }` |
 | `upload.provider` | Legacy/default provider fallback: `"apphost"` (default), `"buildport"`, `"loadly"`, or `"telegram_apk"` |
 | `prepare_release` | Optional defaults for `--prepare-release`, including `tag_prefix` (`"release"` → `release-v1.0.1+11`, `""` → `v1.0.1+11`) |
+| `release_candidate` | Optional `tag_prefix` for `--release-candidate` (default: `release-candidate`) |
+| `channel.prod` | Required for `--release-candidate`: production `ios_bundle_id`, `ios_export_options_plist`, and `env_overrides.TestVersion: "false"`; optional `env_file` |
 | `apphost` | Required when the selected provider is `apphost`: `user_id`, `app_id`, `key`, `ios_bundle_identifier`, `android_package_name` |
 | `buildport` | Required when the selected provider is `buildport`: `api_token` or env `BUILDPORT_API_TOKEN`. Optional: `app_group` (defaults to pubspec `name`), `timeout_seconds` (60–1800, default 600), `changes_path` (tester changelog to derive the change checklist from, default `changelog_tester.md`). Other upload metadata is derived from app info: pubspec version, platform display name, and pubspec description |
 | `loadly` | Required when the selected provider is `loadly`: `api_key` from [Loadly API](https://loadly.io/doc/view/api). Optional: `build_update_description`, `build_password`, `build_install_type`, `build_channel_shortcut`, `timeout_seconds` (60–1800, default 600) |
@@ -70,6 +72,10 @@ tunai-build-script --prepare-release build --project-root /path/to/app
 tunai-build-script --prepare-release patch --tag-prefix release --changelog-from v1.0.0
 tunai-build-script --prepare-release build --tag-prefix "" --changelog-from v1.0.0+10
 
+# Production-configured iOS candidate for final testing on Buildport
+tunai-build-script --release-candidate ios --dry-run
+tunai-build-script --release-candidate ios
+
 # macOS TestFlight
 tunai-build-script --platform macos
 tunai-build-script --platform macos --build-only
@@ -84,6 +90,41 @@ tunai-build-script --generate-changelog --no-fetch-github-pr v1.0.0 HEAD
 ```
 
 Run **`tunai-build-script -help`** for the full option list.
+
+### Release candidate (`--release-candidate ios`)
+
+Builds a final-testing IPA with the production runtime channel and production bundle identifier, signs it for ad-hoc installation, verifies the completed IPA, and uploads it to Buildport. It intentionally does not require a particular branch or approved SHA.
+
+The command requires a clean git tree because it reuses `--prepare-release build`: it bumps the build number, writes scoped changelogs, commits, pushes, creates an annotated RC tag, and pushes that tag before building. Use `--dry-run` to validate configuration and preview these steps without writing channel files or changing git.
+
+Required configuration:
+
+```json
+{
+  "release_candidate": {
+    "tag_prefix": "my-app-rc"
+  },
+  "channel": {
+    "prod": {
+      "ios_bundle_id": "com.example.app",
+      "ios_export_options_plist": "ios/ExportOptions.prod-adhoc.plist",
+      "env_overrides": {
+        "TestVersion": "false"
+      }
+    }
+  },
+  "buildport": {
+    "api_token": "${BUILDPORT_API_TOKEN}"
+  }
+}
+```
+
+Before upload, the CLI opens the generated IPA and requires both:
+
+- `CFBundleIdentifier` exactly matches `channel.prod.ios_bundle_id`.
+- The packaged Flutter asset `.env` contains `TestVersion=false`.
+
+The resulting Buildport IPA is ad-hoc signed for registered tester devices. It is not the App Store binary; build the same approved commit later with App Store signing for TestFlight/App Store Connect.
 
 ### Prepare release (`--prepare-release`)
 

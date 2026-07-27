@@ -15,6 +15,10 @@ import { sendTelegramMessage, sendTelegramDocument } from '../lib/telegram.mjs';
 import { bumpVersion } from '../lib/bump.mjs';
 import { runMacosTestflightScript } from '../lib/macos-testflight.mjs';
 import { runPrepareRelease } from '../lib/prepare-release.mjs';
+import {
+  prepareReleaseCandidate,
+  validateIosReleaseCandidateArtifact,
+} from '../lib/release-candidate.mjs';
 
 const BUMP_TYPES = new Set(['major', 'minor', 'patch', 'build', 'manual']);
 
@@ -33,7 +37,9 @@ Options:
   --prepare-release <type> [ver]  Bump (always includes build #), changelog, commit, push, tag, push tag
   --test-release ios|android    One-liner testing build: channel switch (channel.test in config), build-number
                                 bump, scoped changelog, commit+tag+push, then build & upload. --dry-run previews.
-  --tag-prefix <prefix>         With --prepare-release: tag prefix; overrides prepare_release.tag_prefix/default no prefix
+  --release-candidate ios       One-liner final testing build: channel.prod + production bundle/config, build-number
+                                bump, scoped changelog, RC commit+tag+push, verified IPA, then Buildport upload.
+  --tag-prefix <prefix>         With --prepare-release/--release-candidate: override the configured tag prefix
   --changelog-from <rev>        With --prepare-release: changelog start (default: prefix-matching tag or latest tag)
   --changelog-to <rev>          With --prepare-release: changelog end (default: HEAD)
   --upload                      Upload only (iOS/Android), no build
@@ -75,6 +81,7 @@ Changelog (must be the first argument; needs git on PATH):
 Examples:
   tunai-build-script
   tunai-build-script --platform ios --no-update
+  tunai-build-script --release-candidate ios --dry-run
   tunai-build-script --upload --platform android
   tunai-build-script --upload-changelog CHANGELOG.md
   tunai-build-script --platform macos --build-only
@@ -135,6 +142,7 @@ function parseArgs(argv) {
     testTelegram: false,
     testUploadFile: null,
     testReleasePlatform: null,
+    releaseCandidatePlatform: null,
     dryRun: false,
   };
 
@@ -209,6 +217,13 @@ function parseArgs(argv) {
         process.exit(1);
       }
       out.testReleasePlatform = pl;
+    } else if (a === '--release-candidate') {
+      const pl = argv[++i]?.toLowerCase();
+      if (pl !== 'ios') {
+        console.error('Error: --release-candidate currently requires ios');
+        process.exit(1);
+      }
+      out.releaseCandidatePlatform = pl;
     } else if (a === '--dry-run') {
       out.dryRun = true;
     } else if (a === '--tag-prefix') {
@@ -391,6 +406,26 @@ function resolveMacosAppDir(explicitProjectRoot) {
 }
 
 function validateNoMix(args, mode) {
+  if (mode === 'release-candidate') {
+    const conflicts = [
+      ['testReleasePlatform', 'Error: choose --release-candidate or --test-release'],
+      ['prepareReleaseType', 'Error: do not combine --release-candidate with --prepare-release'],
+      ['bumpType', 'Error: do not combine --release-candidate with --bump-version'],
+      ['platform', 'Error: do not use --platform with --release-candidate'],
+      ['uploadOnly', 'Error: do not use --upload with --release-candidate'],
+      ['noUpdate', 'Error: --release-candidate already builds without git pull/pub get'],
+      ['testTelegram', 'Error: do not combine --release-candidate with Telegram test flags'],
+      ['testUploadFile', 'Error: do not combine --release-candidate with Telegram test flags'],
+      ['macosBuildOnly', 'Error: --build-only / --repo-update are only for --platform macos'],
+      ['macosRepoUpdate', 'Error: --build-only / --repo-update are only for --platform macos'],
+    ];
+    for (const [key, msg] of conflicts) {
+      if (args[key]) {
+        console.error(msg);
+        process.exit(1);
+      }
+    }
+  }
   if (mode === 'prepare-release') {
     const conflicts = [
       ['platform', 'Error: do not use --platform with --prepare-release'],
@@ -491,8 +526,10 @@ async function main() {
     return;
   }
 
-  const mode = args.testReleasePlatform
-    ? 'test-release'
+  const mode = args.releaseCandidatePlatform
+    ? 'release-candidate'
+    : args.testReleasePlatform
+      ? 'test-release'
     : args.prepareReleaseType
     ? 'prepare-release'
     : args.bumpType
@@ -502,6 +539,80 @@ async function main() {
         : 'build';
 
   validateNoMix(args, mode);
+
+  if (mode === 'release-candidate') {
+    const { projectRoot, configPath } = resolveProjectRootWithConfig(
+      args.projectRoot,
+      args.config,
+    );
+    console.log(
+      `Release candidate (${args.releaseCandidatePlatform}) in: ${projectRoot}`,
+    );
+    console.log(`Using config: ${configPath}`);
+
+    const sourceConfig = loadConfigFile(configPath);
+    const releaseConfig = getPrepareReleaseSection(sourceConfig);
+    const candidate = prepareReleaseCandidate({
+      projectRoot,
+      config: sourceConfig,
+      platform: args.releaseCandidatePlatform,
+      writeFiles: !args.dryRun,
+    });
+    const changelogPaths = Array.isArray(releaseConfig.changelog_paths)
+      ? releaseConfig.changelog_paths
+      : null;
+    const tagPrefix = args.tagPrefix ?? candidate.tagPrefix;
+
+    console.log('Channel: production');
+    console.log(`iOS bundle id: ${candidate.iosBundleId}`);
+    console.log(`iOS export options: ${candidate.exportOptionsPath}`);
+    console.log('Distribution: Buildport');
+
+    if (args.dryRun) {
+      console.log('\nDry run — would now:');
+      console.log('  1. Write production .env and iOS channel.xcconfig');
+      console.log(
+        `  2. prepare-release (build bump), tag prefix "${tagPrefix}"` +
+          (changelogPaths
+            ? `, changelog scoped to: ${changelogPaths.join(' ')}`
+            : ''),
+      );
+      console.log(
+        '  3. build IPA with production ad-hoc signing, validate its bundle/config, and upload to Buildport',
+      );
+      return;
+    }
+
+    await runPrepareRelease({
+      projectRoot,
+      bumpType: 'build',
+      changelogFrom: args.changelogFrom,
+      changelogTo: args.changelogTo,
+      tagPrefix,
+      changelogPaths,
+    });
+
+    const changelogEffective =
+      args.uploadChangelog ||
+      (candidate.config.upload &&
+        candidate.config.upload.changelog_path) ||
+      null;
+    await performBuild({
+      projectRoot,
+      config: candidate.config,
+      platform: args.releaseCandidatePlatform,
+      update: false,
+      changelogRelativePath: changelogEffective,
+      topicIdOverride:
+        args.topicId || process.env.TELEGRAM_TOPIC_ID || undefined,
+      validateBuildArtifact: (ipaPath) =>
+        validateIosReleaseCandidateArtifact({
+          ipaPath,
+          expectedBundleId: candidate.iosBundleId,
+        }),
+    });
+    return;
+  }
 
   if (mode === 'test-release') {
     const { projectRoot, configPath } = resolveProjectRootWithConfig(
