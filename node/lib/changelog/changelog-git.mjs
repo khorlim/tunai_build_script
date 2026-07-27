@@ -114,7 +114,7 @@ export function parseFormattedLogOutput(output) {
  * @param {string} fromRev
  * @param {string} toRev
  * @param {string | null} [gitWorkingDir] submodule path → git -C
- * @param {{ onGitError?: (info: { args: string[], stderr: string }) => void }} [opts]
+ * @param {{ onGitError?: (info: { args: string[], stderr: string }) => void, pathspecs?: string[] | null }} [opts]
  * @returns {Promise<string[]>}
  */
 export async function getFormattedLogCommits(
@@ -130,6 +130,9 @@ export async function getFormattedLogCommits(
     `${fromRev}..${toRev}`,
     '--no-merges',
     `--format=${RECORD_START}%h${FIELD_SEP}%s${FIELD_SEP}%b`,
+    ...(opts.pathspecs && opts.pathspecs.length
+      ? ['--', ...opts.pathspecs]
+      : []),
   ];
   const spawnCwd = gitWorkingDir ?? projectRoot;
   const result = await runGit(spawnCwd, args);

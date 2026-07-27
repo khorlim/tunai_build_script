@@ -150,7 +150,7 @@ export function writeFormattedCommits(lines, write) {
  * @param {string} fromTag
  * @param {string} toTag
  */
-async function loadMainRepositoryCommits(projectRoot, fromTag, toTag) {
+async function loadMainRepositoryCommits(projectRoot, fromTag, toTag, pathspecs = null) {
   /** @type {string | null} */
   let mainLogErr = null;
   const mainCommits = await getFormattedLogCommits(
@@ -159,6 +159,7 @@ async function loadMainRepositoryCommits(projectRoot, fromTag, toTag) {
     toTag,
     null,
     {
+      pathspecs,
       onGitError: ({ stderr }) => {
         mainLogErr = stderr.trim() || 'git log failed';
       },
@@ -223,7 +224,7 @@ export async function generateTesterChangelogMarkdown(
     await Promise.all([
       getReleaseVersionAndDate(projectRoot, toTag, now),
       resolveChangelogRevisionLabels(projectRoot, fromTag, toTag),
-      loadMainRepositoryCommits(projectRoot, fromTag, toTag),
+      loadMainRepositoryCommits(projectRoot, fromTag, toTag, options.pathspecs ?? null),
       getSubmoduleDeltas(projectRoot, fromTag, toTag, {
         onGitWarning: warn,
       }),
@@ -364,6 +365,7 @@ export async function generateChangelogMarkdown(
     projectRoot,
     fromTag,
     toTag,
+    options.pathspecs ?? null,
   );
 
   if (mainLogErr) {

@@ -245,10 +245,15 @@ async function resolveChangelogAndTagOptions(opts) {
  * @param {string} fromRev
  * @param {string} toRev
  */
-async function writeChangelogs(projectRoot, fromRev, toRev) {
+async function writeChangelogs(projectRoot, fromRev, toRev, pathspecs = null) {
   console.log(`Generating changelog: ${fromRev} .. ${toRev}`);
+  if (pathspecs && pathspecs.length) {
+    console.log(`Changelog scoped to paths: ${pathspecs.join(' ')}`);
+  }
 
-  const eng = await generateChangelogMarkdown(projectRoot, fromRev, toRev);
+  const eng = await generateChangelogMarkdown(projectRoot, fromRev, toRev, {
+    pathspecs,
+  });
   for (const w of eng.warnings) console.warn(`Warning: ${w}`);
 
   const engPath = path.join(projectRoot, ENGINEERING_CHANGELOG);
@@ -259,6 +264,7 @@ async function writeChangelogs(projectRoot, fromRev, toRev) {
     projectRoot,
     fromRev,
     toRev,
+    { pathspecs },
   );
   const seen = new Set(eng.warnings);
   for (const w of tester.warnings) {
@@ -294,6 +300,7 @@ async function gitCommit(projectRoot, relativePaths, message) {
  *   changelogFrom?: string | null,
  *   changelogTo?: string | null,
  *   tagPrefix?: string | null,
+ *   changelogPaths?: string[] | null,
  * }} opts
  */
 export async function runPrepareRelease(opts) {
@@ -367,7 +374,7 @@ export async function runPrepareRelease(opts) {
     }
 
     console.log('\n[2/6] Generating changelogs…');
-    await writeChangelogs(projectRoot, changelogFrom, changelogTo);
+    await writeChangelogs(projectRoot, changelogFrom, changelogTo, opts.changelogPaths ?? null);
 
     const releasePaths = collectTrackedRelativePaths(projectRoot);
     const commitMessage = `chore(release): v${version}`;
