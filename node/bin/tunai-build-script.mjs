@@ -16,6 +16,7 @@ import { bumpVersion } from '../lib/bump.mjs';
 import { runMacosTestflightScript } from '../lib/macos-testflight.mjs';
 import { runPrepareRelease } from '../lib/prepare-release.mjs';
 import {
+  prepareChannelEnvironment,
   prepareReleaseCandidate,
   validateIosReleaseCandidateArtifact,
 } from '../lib/release-candidate.mjs';
@@ -567,6 +568,9 @@ async function main() {
     console.log(`iOS bundle id: ${candidate.iosBundleId}`);
     console.log(`iOS export options: ${candidate.exportOptionsPath}`);
     console.log('Distribution: Buildport');
+    console.log(
+      `Buildport app group: ${candidate.buildportAppGroup ?? '(pubspec name)'}`,
+    );
 
     if (args.dryRun) {
       console.log('\nDry run — would now:');
@@ -625,6 +629,13 @@ async function main() {
     const config = loadConfigFile(configPath);
     const releaseConfig = getPrepareReleaseSection(config);
     const channel = (config.channel && config.channel.test) || {};
+    const channelEnvironment = prepareChannelEnvironment({
+      projectRoot,
+      channel,
+      channelName: 'test',
+      expectedTestVersion: true,
+      writeFile: !args.dryRun,
+    });
     const changelogPaths = Array.isArray(releaseConfig.changelog_paths)
       ? releaseConfig.changelog_paths
       : null;
@@ -647,31 +658,33 @@ async function main() {
         (channel.ios_display_name
           ? `APP_DISPLAY_NAME = ${channel.ios_display_name}\n`
           : '');
-      fs.writeFileSync(channelFile, content, 'utf8');
+      if (!args.dryRun) {
+        fs.mkdirSync(path.dirname(channelFile), { recursive: true });
+        fs.writeFileSync(channelFile, content, 'utf8');
+      }
       console.log(
         `Channel: test (iOS bundle id ${channel.ios_bundle_id})`,
       );
     }
-    if (channel.env_file) {
-      const src = path.join(projectRoot, channel.env_file);
-      if (!fs.existsSync(src)) {
-        console.error(`Error: channel.test.env_file not found: ${src}`);
-        process.exit(1);
-      }
-      fs.copyFileSync(src, path.join(projectRoot, '.env'));
-      console.log(`Channel: .env <- ${channel.env_file}`);
-    }
+    console.log(
+      `Channel environment: TestVersion=${channelEnvironment.testVersion}`,
+    );
 
     if (args.dryRun) {
       console.log('\nDry run — would now:');
       console.log(
-        `  1. prepare-release (build bump), tag prefix "${tagPrefix ?? ''}"` +
+        `  1. Write test .env${
+          args.testReleasePlatform === 'ios' ? ' and iOS channel.xcconfig' : ''
+        }`,
+      );
+      console.log(
+        `  2. prepare-release (build bump), tag prefix "${tagPrefix ?? ''}"` +
           (changelogPaths
             ? `, changelog scoped to: ${changelogPaths.join(' ')}`
             : ''),
       );
       console.log(
-        `  2. build + upload ${args.testReleasePlatform} (no git pull/pub get)`,
+        `  3. build + upload ${args.testReleasePlatform} (no git pull/pub get)`,
       );
       return;
     }

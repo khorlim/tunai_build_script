@@ -34,6 +34,7 @@ Copy `example/tunai_build_script_config.example.json` to your Flutter project ro
 | `upload.provider` | Legacy/default provider fallback: `"apphost"` (default), `"buildport"`, `"loadly"`, or `"telegram_apk"` |
 | `prepare_release` | Optional defaults for `--prepare-release`, including `tag_prefix` (`"release"` → `release-v1.0.1+11`, `""` → `v1.0.1+11`) |
 | `release_candidate` | Optional `tag_prefix` for `--release-candidate` (default: `release-candidate`) |
+| `channel.test` | Required for `--test-release`: test identifiers plus `env_overrides.TestVersion: "true"`; optional `env_file` |
 | `channel.prod` | Required for `--release-candidate`: production `ios_bundle_id`, `ios_display_name`, `ios_export_options_plist`, and `env_overrides.TestVersion: "false"`; optional `env_file` |
 | `apphost` | Required when the selected provider is `apphost`: `user_id`, `app_id`, `key`, `ios_bundle_identifier`, `android_package_name` |
 | `buildport` | Required when the selected provider is `buildport`: `api_token` or env `BUILDPORT_API_TOKEN`. Optional: `app_group` (defaults to pubspec `name`), `timeout_seconds` (60–1800, default 600), `changes_path` (tester changelog to derive the change checklist from, default `changelog_tester.md`). Other upload metadata is derived from app info: pubspec version, platform display name, and pubspec description |
@@ -44,6 +45,8 @@ Copy `example/tunai_build_script_config.example.json` to your Flutter project ro
 | `macos_testflight` | For `--platform macos`: `scheme`, `export_plist`, and **`app_store_key_json_path`** (relative or absolute) pointing at JSON: `key_id`, `issuer_id`, `key` (PEM string), optional `duration`, `in_house`. The CLI writes a temp `.p8` for `altool`. `${ENV}` works inside that JSON. **Legacy:** `api_key_id`, `api_issuer_id`, `api_private_key_path` (used only if `app_store_key_json_path` is omitted) |
 
 Plist templates: `example/example_export_options_ios.plist` (IPA export), `example/example_export_options_macos.plist` (Mac App Store / TestFlight). App Store Connect API key JSON: `example/app_store_connect_api_key.example.json`.
+
+Keep channel switches such as `TestVersion` out of `.env.tunai.defaults`. The test and production channel configs must set them explicitly so a shared default cannot silently override the selected release channel.
 
 `telegram_apk` is Android-only and sends the built APK file directly to Telegram as a document.
 
@@ -115,7 +118,8 @@ Required configuration:
     }
   },
   "buildport": {
-    "api_token": "${BUILDPORT_API_TOKEN}"
+    "api_token": "${BUILDPORT_API_TOKEN}",
+    "app_group": "Example"
   }
 }
 ```
@@ -125,6 +129,7 @@ Before upload, the CLI opens the generated IPA and requires both:
 - `CFBundleIdentifier` exactly matches `channel.prod.ios_bundle_id`.
 - `CFBundleDisplayName` exactly matches `channel.prod.ios_display_name`.
 - The packaged Flutter asset `.env` contains `TestVersion=false`.
+- The packaged `.env.tunai.defaults`, when present, does not define `TestVersion`.
 
 The resulting Buildport IPA is ad-hoc signed for registered tester devices. It is not the App Store binary; build the same approved commit later with App Store signing for TestFlight/App Store Connect.
 

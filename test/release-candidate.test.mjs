@@ -7,6 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   applyDotEnvOverrides,
+  prepareChannelEnvironment,
   prepareReleaseCandidate,
   readDotEnvValue,
   validateIosReleaseCandidateArtifact,
@@ -35,6 +36,10 @@ function makeTempProject() {
     'name: example\nversion: 1.0.0+1\n',
   );
   fs.writeFileSync(
+    path.join(projectRoot, '.env.tunai.defaults'),
+    'CONFIG_URL=https://config.example.test\n',
+  );
+  fs.writeFileSync(
     path.join(projectRoot, 'ios', 'ExportOptions.prod-adhoc.plist'),
     `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -59,6 +64,7 @@ function candidateConfig() {
     upload: { provider: 'apphost' },
     buildport: {
       api_token: 'test-token',
+      app_group: 'Example',
     },
     release_candidate: {
       tag_prefix: 'example-rc',
@@ -107,6 +113,7 @@ test('release candidate writes production channel and forces Buildport', (t) => 
 
   assert.equal(result.iosBundleId, 'com.example.app');
   assert.equal(result.tagPrefix, 'example-rc');
+  assert.equal(result.buildportAppGroup, 'Example');
   assert.equal(result.config.upload.provider, 'buildport');
   assert.equal(result.config.upload.providers.ios, 'buildport');
   assert.equal(
@@ -133,6 +140,51 @@ test('release candidate writes production channel and forces Buildport', (t) => 
       'utf8',
     ),
     /APP_DISPLAY_NAME = Example/,
+  );
+});
+
+test('test channel writes an explicit test environment', (t) => {
+  const projectRoot = makeTempProject();
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(projectRoot, '.env'), 'TestVersion=false\n');
+
+  const result = prepareChannelEnvironment({
+    projectRoot,
+    channel: {
+      env_overrides: {
+        TestVersion: 'true',
+      },
+    },
+    channelName: 'test',
+    expectedTestVersion: true,
+  });
+
+  assert.equal(result.testVersion, 'true');
+  assert.equal(
+    readDotEnvValue(
+      fs.readFileSync(path.join(projectRoot, '.env'), 'utf8'),
+      'TestVersion',
+    ),
+    'true',
+  );
+});
+
+test('channel preparation refuses TestVersion in shared defaults', (t) => {
+  const projectRoot = makeTempProject();
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(projectRoot, '.env.tunai.defaults'),
+    'TestVersion=true\n',
+  );
+
+  assert.throws(
+    () =>
+      prepareReleaseCandidate({
+        projectRoot,
+        config: candidateConfig(),
+        platform: 'ios',
+      }),
+    /.env.tunai.defaults must not define TestVersion/,
   );
 });
 
@@ -186,6 +238,49 @@ test('release-candidate dry-run needs no git branch or repository', (t) => {
   assert.equal(fs.existsSync(path.join(projectRoot, '.env')), false);
 });
 
+test('test-release dry-run validates test env without writing it', (t) => {
+  const projectRoot = makeTempProject();
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  const config = candidateConfig();
+  config.channel.test = {
+    ios_bundle_id: 'com.example.app.test',
+    ios_display_name: 'Example Test',
+    env_overrides: {
+      TestVersion: 'true',
+    },
+  };
+  const configPath = path.join(
+    projectRoot,
+    'tunai_build_script_config.json',
+  );
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      '--test-release',
+      'ios',
+      '--dry-run',
+      '--project-root',
+      projectRoot,
+      '--config',
+      configPath,
+    ],
+    { encoding: 'utf8' },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Channel environment: TestVersion=true/);
+  assert.equal(fs.existsSync(path.join(projectRoot, '.env')), false);
+  assert.equal(
+    fs.existsSync(
+      path.join(projectRoot, 'ios', 'Flutter', 'channel.xcconfig'),
+    ),
+    false,
+  );
+});
+
 test('IPA validation checks production bundle id and packaged env', (t) => {
   const zipCheck = spawnSync('zip', ['-v'], { stdio: 'ignore' });
   const plistCheck = spawnSync('plutil', ['-help'], { stdio: 'ignore' });
@@ -224,6 +319,11 @@ test('IPA validation checks production bundle id and packaged env', (t) => {
     path.join(flutterAssets, '.env'),
     'TestVersion=false\n',
   );
+  const defaultsPath = path.join(flutterAssets, '.env.tunai.defaults');
+  fs.writeFileSync(
+    defaultsPath,
+    'CONFIG_URL=https://config.example.test\n',
+  );
   const ipaPath = path.join(projectRoot, 'example.ipa');
   execFileSync('zip', ['-qr', ipaPath, 'Payload'], {
     cwd: projectRoot,
@@ -249,5 +349,21 @@ test('IPA validation checks production bundle id and packaged env', (t) => {
         expectedDisplayName: 'Example',
       }),
     /expected "com\.example\.other"/,
+  );
+
+  fs.writeFileSync(defaultsPath, 'TestVersion=true\n');
+  execFileSync(
+    'zip',
+    ['-q', ipaPath, path.relative(projectRoot, defaultsPath)],
+    { cwd: projectRoot },
+  );
+  assert.throws(
+    () =>
+      validateIosReleaseCandidateArtifact({
+        ipaPath,
+        expectedBundleId: 'com.example.app',
+        expectedDisplayName: 'Example',
+      }),
+    /defaults must not define TestVersion/,
   );
 });
