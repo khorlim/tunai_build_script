@@ -62,6 +62,87 @@ function resolveProjectPath(projectRoot, configuredPath) {
     : path.join(projectRoot, configuredPath);
 }
 
+export function prepareChannelEnvironment({
+  projectRoot,
+  channel,
+  channelName,
+  expectedTestVersion,
+  writeFile = true,
+}) {
+  const fieldName = `channel.${channelName}`;
+  if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
+    throw new Error(`${fieldName} is required`);
+  }
+  if (typeof expectedTestVersion !== 'boolean') {
+    throw new Error('expectedTestVersion must be a boolean');
+  }
+
+  const expectedValue = String(expectedTestVersion);
+  const envOverrides = {
+    ...requirePlainStringMap(
+      channel.env_overrides,
+      `${fieldName}.env_overrides`,
+    ),
+  };
+  if (!Object.prototype.hasOwnProperty.call(envOverrides, 'TestVersion')) {
+    throw new Error(
+      `${fieldName}.env_overrides.TestVersion must be configured as "${expectedValue}"`,
+    );
+  }
+  if (envOverrides.TestVersion.trim().toLowerCase() !== expectedValue) {
+    throw new Error(
+      `${fieldName}.env_overrides.TestVersion must be "${expectedValue}"`,
+    );
+  }
+
+  const defaultsPath = path.join(projectRoot, '.env.tunai.defaults');
+  if (fs.existsSync(defaultsPath)) {
+    const defaultsContent = fs.readFileSync(defaultsPath, 'utf8');
+    if (readDotEnvValue(defaultsContent, 'TestVersion') !== undefined) {
+      throw new Error(
+        '.env.tunai.defaults must not define TestVersion; configure it per channel',
+      );
+    }
+  }
+
+  const envPath = path.join(projectRoot, '.env');
+  let envContent = '';
+  if (
+    channel.env_file !== undefined &&
+    typeof channel.env_file !== 'string'
+  ) {
+    throw new Error(`${fieldName}.env_file must be a string`);
+  }
+  const envFile = channel.env_file?.trim();
+  if (envFile) {
+    const sourcePath = resolveProjectPath(projectRoot, envFile);
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error(`${fieldName}.env_file not found: ${sourcePath}`);
+    }
+    envContent = fs.readFileSync(sourcePath, 'utf8');
+  } else if (fs.existsSync(envPath)) {
+    envContent = fs.readFileSync(envPath, 'utf8');
+  }
+  envContent = applyDotEnvOverrides(envContent, envOverrides);
+
+  const resolvedTestVersion = readDotEnvValue(envContent, 'TestVersion');
+  if (resolvedTestVersion?.toLowerCase() !== expectedValue) {
+    throw new Error(
+      `Resolved ${channelName} .env must contain TestVersion=${expectedValue}`,
+    );
+  }
+
+  if (writeFile) {
+    fs.writeFileSync(envPath, envContent, 'utf8');
+  }
+
+  return {
+    envPath,
+    envContent,
+    testVersion: resolvedTestVersion,
+  };
+}
+
 export function prepareReleaseCandidate({
   projectRoot,
   config,
@@ -130,50 +211,20 @@ export function prepareReleaseCandidate({
     );
   }
 
-  if (!getBuildportSection(config)) {
+  const buildport = getBuildportSection(config);
+  if (!buildport) {
     throw new Error(
       '--release-candidate requires buildport.api_token or BUILDPORT_API_TOKEN',
     );
   }
 
-  const envOverrides = {
-    ...requirePlainStringMap(
-      channel.env_overrides,
-      'channel.prod.env_overrides',
-    ),
-  };
-  if (!Object.prototype.hasOwnProperty.call(envOverrides, 'TestVersion')) {
-    throw new Error(
-      'channel.prod.env_overrides.TestVersion must be configured as "false"',
-    );
-  }
-  if (envOverrides.TestVersion.trim().toLowerCase() !== 'false') {
-    throw new Error(
-      'channel.prod.env_overrides.TestVersion must be "false"',
-    );
-  }
-
-  const envPath = path.join(projectRoot, '.env');
-  let envContent = '';
-  const envFile = channel.env_file?.trim();
-  if (envFile) {
-    const sourcePath = resolveProjectPath(projectRoot, envFile);
-    if (!fs.existsSync(sourcePath)) {
-      throw new Error(`channel.prod.env_file not found: ${sourcePath}`);
-    }
-    envContent = fs.readFileSync(sourcePath, 'utf8');
-  } else if (fs.existsSync(envPath)) {
-    envContent = fs.readFileSync(envPath, 'utf8');
-  }
-  envContent = applyDotEnvOverrides(envContent, envOverrides);
-
-  if (
-    readDotEnvValue(envContent, 'TestVersion')?.toLowerCase() !== 'false'
-  ) {
-    throw new Error(
-      'Resolved production .env must contain TestVersion=false',
-    );
-  }
+  const { envPath, envContent } = prepareChannelEnvironment({
+    projectRoot,
+    channel,
+    channelName: 'prod',
+    expectedTestVersion: false,
+    writeFile: false,
+  });
 
   const channelFile = path.join(
     projectRoot,
@@ -181,18 +232,6 @@ export function prepareReleaseCandidate({
     'Flutter',
     'channel.xcconfig',
   );
-  if (writeFiles) {
-    fs.mkdirSync(path.dirname(channelFile), { recursive: true });
-    fs.writeFileSync(
-      channelFile,
-      `// Written by tunai-build-script (--release-candidate). Do not commit.\n` +
-        `PRODUCT_BUNDLE_IDENTIFIER = ${iosBundleId}\n` +
-        `APP_DISPLAY_NAME = ${iosDisplayName}\n`,
-      'utf8',
-    );
-    fs.writeFileSync(envPath, envContent, 'utf8');
-  }
-
   const releaseCandidate = config.release_candidate;
   if (
     releaseCandidate !== undefined &&
@@ -231,6 +270,18 @@ export function prepareReleaseCandidate({
     },
   };
 
+  if (writeFiles) {
+    fs.mkdirSync(path.dirname(channelFile), { recursive: true });
+    fs.writeFileSync(
+      channelFile,
+      `// Written by tunai-build-script (--release-candidate). Do not commit.\n` +
+        `PRODUCT_BUNDLE_IDENTIFIER = ${iosBundleId}\n` +
+        `APP_DISPLAY_NAME = ${iosDisplayName}\n`,
+      'utf8',
+    );
+    fs.writeFileSync(envPath, envContent, 'utf8');
+  }
+
   return {
     config: effectiveConfig,
     iosBundleId,
@@ -239,6 +290,7 @@ export function prepareReleaseCandidate({
     envPath,
     channelFile,
     tagPrefix,
+    buildportAppGroup: buildport.app_group,
   };
 }
 
@@ -318,6 +370,22 @@ export function validateIosReleaseCandidateArtifact({
     throw new Error(
       `Release-candidate IPA must contain TestVersion=false, got "${testVersion ?? 'missing'}"`,
     );
+  }
+
+  const defaultsEntry = entries.find((entry) =>
+    /\/flutter_assets\/\.env\.tunai\.defaults$/.test(entry),
+  );
+  if (defaultsEntry) {
+    const defaultsContent = runCommand('unzip', [
+      '-p',
+      ipaPath,
+      defaultsEntry,
+    ]);
+    if (readDotEnvValue(defaultsContent, 'TestVersion') !== undefined) {
+      throw new Error(
+        'Release-candidate IPA defaults must not define TestVersion',
+      );
+    }
   }
 
   return { bundleId, displayName, testVersion };

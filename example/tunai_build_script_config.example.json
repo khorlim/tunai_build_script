@@ -15,10 +15,15 @@
   },
   "channel": {
     "test": {
-      "ios_bundle_id": "com.example.app.test"
+      "ios_bundle_id": "com.example.app.test",
+      "ios_display_name": "Example Test",
+      "env_overrides": {
+        "TestVersion": "true"
+      }
     },
     "prod": {
       "ios_bundle_id": "com.example.app",
+      "ios_display_name": "Example",
       "ios_export_options_plist": "ios/ExportOptions.prod-adhoc.plist",
       "env_overrides": {
         "TestVersion": "false"
