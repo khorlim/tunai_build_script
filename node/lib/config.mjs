@@ -107,6 +107,46 @@ export function getTelegramSection(config) {
 }
 
 /** @param {ReturnType<typeof loadConfigFile>} config */
+export function getTelegramChangelogSummarySection(config) {
+  const s = config?.telegram?.changelog_summary;
+  if (!s || typeof s !== 'object' || s.enabled !== true) return null;
+
+  const provider = s.provider?.trim() || 'claude_cli';
+  if (provider !== 'claude_cli') {
+    throw new Error(
+      'telegram.changelog_summary.provider must be "claude_cli"',
+    );
+  }
+
+  const model = s.model?.trim() || 'haiku';
+  const maxChars = s.max_chars;
+  const timeoutSeconds = s.timeout_seconds;
+  const failureMode = s.failure_mode?.trim() || 'warn';
+  if (failureMode !== 'warn') {
+    throw new Error(
+      'telegram.changelog_summary.failure_mode must be "warn"',
+    );
+  }
+
+  return {
+    enabled: true,
+    provider,
+    model,
+    max_chars:
+      typeof maxChars === 'number' && maxChars >= 500 && maxChars <= 3500
+        ? maxChars
+        : 3000,
+    timeout_seconds:
+      typeof timeoutSeconds === 'number' &&
+      timeoutSeconds >= 10 &&
+      timeoutSeconds <= 300
+        ? timeoutSeconds
+        : 60,
+    failure_mode: failureMode,
+  };
+}
+
+/** @param {ReturnType<typeof loadConfigFile>} config */
 export function getPrepareReleaseSection(config) {
   const r = config?.prepare_release;
   if (!r || typeof r !== 'object') return {};

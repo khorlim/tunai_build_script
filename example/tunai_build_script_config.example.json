@@ -48,7 +48,15 @@
   "telegram": {
     "bot_token": "${TELEGRAM_BOT_TOKEN}",
     "chat_id": "${TELEGRAM_CHAT_ID}",
-    "topic_id": ""
+    "topic_id": "",
+    "changelog_summary": {
+      "enabled": false,
+      "provider": "claude_cli",
+      "model": "haiku",
+      "max_chars": 3000,
+      "timeout_seconds": 60,
+      "failure_mode": "warn"
+    }
   },
   "ios": {
     "export_options_plist": "ios/ExportOptions.plist"

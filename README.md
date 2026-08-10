@@ -39,7 +39,7 @@ Copy `example/tunai_build_script_config.example.json` to your Flutter project ro
 | `apphost` | Required when the selected provider is `apphost`: `user_id`, `app_id`, `key`, `ios_bundle_identifier`, `android_package_name` |
 | `buildport` | Required when the selected provider is `buildport`: `api_token` or env `BUILDPORT_API_TOKEN`. Optional: `app_group` (defaults to pubspec `name`), `timeout_seconds` (60–1800, default 600), `changes_path` (tester changelog to derive the change checklist from, default `changelog_tester.md`). Other upload metadata is derived from app info: pubspec version, platform display name, and pubspec description |
 | `loadly` | Required when the selected provider is `loadly`: `api_key` from [Loadly API](https://loadly.io/doc/view/api). Optional: `build_update_description`, `build_password`, `build_install_type`, `build_channel_shortcut`, `timeout_seconds` (60–1800, default 600) |
-| `telegram` | Optional for notifications; required when provider is `telegram_apk`. `bot_token`, `chat_id`, optional `topic_id`. Use `${ENV_VAR}` in strings to pull secrets from the environment |
+| `telegram` | Optional for notifications; required when provider is `telegram_apk`. `bot_token`, `chat_id`, optional `topic_id`. Optional `changelog_summary` can use the signed-in Claude CLI to send an AI summary before the changelog document. Use `${ENV_VAR}` in strings to pull secrets from the environment |
 | `ios.export_options_plist` | Relative path to the plist passed to `flutter build ipa` (default `ios/ExportOptions.plist`) |
 | `upload.changelog_path` | Optional relative path; file is sent via Telegram after a successful upload |
 | `macos_testflight` | For `--platform macos`: `scheme`, `export_plist`, and **`app_store_key_json_path`** (relative or absolute) pointing at JSON: `key_id`, `issuer_id`, `key` (PEM string), optional `duration`, `in_house`. The CLI writes a temp `.p8` for `altool`. `${ENV}` works inside that JSON. **Legacy:** `api_key_id`, `api_issuer_id`, `api_private_key_path` (used only if `app_store_key_json_path` is omitted) |
@@ -49,6 +49,8 @@ Plist templates: `example/example_export_options_ios.plist` (IPA export), `examp
 Keep channel switches such as `TestVersion` out of `.env.tunai.defaults`. The test and production channel configs must set them explicitly so a shared default cannot silently override the selected release channel.
 
 `telegram_apk` is Android-only and sends the built APK file directly to Telegram as a document.
+
+To summarize `upload.changelog_path` before its Telegram document is sent, enable `telegram.changelog_summary` as shown in the example config. The `claude_cli` provider runs `claude -p --model haiku` with tools and session persistence disabled. It removes Anthropic API environment variables from the child process so the Claude CLI uses its signed-in subscription. Summary generation or delivery failure only logs a warning; it never blocks the original changelog document or turns a successful release into a failed one. Use `--test-changelog-summary changelog_tester.md --platform ios` to generate and send only the summary.
 
 `buildport` uploads the generated `.apk` or `.ipa` to `https://support.tunai.io/buildport/api/releases` as multipart field `apps` and returns the tester share URL from the API response. It sends `app_group` from `buildport.app_group` when configured, otherwise pubspec `name`; `release_version` from pubspec `version`; `title` from app display name + version; and `notes` from pubspec `description`. When a tester changelog exists (`buildport.changes_path`, default `changelog_tester.md`, as written by `--generate-changelog`/`--prepare-release`), its PR entries are also sent as a `changes` JSON array (`text`, `pr_number`, `pr_url` from each repo's github.com origin, `module` from the submodule name, and `category` — feature/fix/improvement/internal — inferred from the PR title) so Buildport shows a per-version tester checklist grouped by module. Only the newest `## Release` section is read; if the file is missing, the upload proceeds without changes.
 
@@ -63,6 +65,7 @@ tunai-build-script --upload
 tunai-build-script --upload-changelog CHANGELOG.md
 tunai-build-script --test-telegram
 tunai-build-script --test-upload-file notes.md
+tunai-build-script --test-changelog-summary changelog_tester.md --platform ios
 
 # Version bump
 tunai-build-script --bump-version patch

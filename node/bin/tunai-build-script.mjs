@@ -7,11 +7,15 @@ import { findProjectWithConfig, CONFIG_FILENAME } from '../lib/find-project.mjs'
 import {
   loadConfigFile,
   getPrepareReleaseSection,
+  getTelegramChangelogSummarySection,
   getTelegramSection,
 } from '../lib/config.mjs';
 import { detectPlatform } from '../lib/platform-detect.mjs';
 import { performBuild, performUpload } from '../lib/build.mjs';
 import { sendTelegramMessage, sendTelegramDocument } from '../lib/telegram.mjs';
+import { getAppInfo } from '../lib/app-info.mjs';
+import { getVersion } from '../lib/pubspec.mjs';
+import { generateChangelogSummary } from '../lib/changelog-summary.mjs';
 import { bumpVersion } from '../lib/bump.mjs';
 import { runMacosTestflightScript } from '../lib/macos-testflight.mjs';
 import { runPrepareRelease } from '../lib/prepare-release.mjs';
@@ -54,6 +58,7 @@ Options:
   --topic-id <id>               Telegram forum thread (overrides config / TELEGRAM_TOPIC_ID)
   --test-telegram               Send a test Telegram message (needs config + telegram.*)
   --test-upload-file <path>     Send a file via Telegram (path relative to project root)
+  --test-changelog-summary <path>  Summarize a changelog with Claude and send it to Telegram
   -h, -help, --help             Show this help
 
 Changelog (must be the first argument; needs git on PATH):
@@ -85,6 +90,7 @@ Examples:
   tunai-build-script --release-candidate ios --dry-run
   tunai-build-script --upload --platform android
   tunai-build-script --upload-changelog CHANGELOG.md
+  tunai-build-script --test-changelog-summary changelog_tester.md --platform ios
   tunai-build-script --platform macos --build-only
   tunai-build-script --bump-version patch
   tunai-build-script --bump-version manual 1.2.3+5 --project-root /path/to/app
@@ -142,6 +148,7 @@ function parseArgs(argv) {
     topicId: null,
     testTelegram: false,
     testUploadFile: null,
+    testChangelogSummary: null,
     testReleasePlatform: null,
     releaseCandidatePlatform: null,
     dryRun: false,
@@ -252,6 +259,16 @@ function parseArgs(argv) {
     else if (a === '--topic-id') out.topicId = argv[++i];
     else if (a === '--test-telegram') out.testTelegram = true;
     else if (a === '--test-upload-file') out.testUploadFile = argv[++i];
+    else if (a === '--test-changelog-summary') {
+      out.testChangelogSummary = argv[++i];
+      if (
+        !out.testChangelogSummary ||
+        out.testChangelogSummary.startsWith('-')
+      ) {
+        console.error('Error: --test-changelog-summary requires a file path');
+        process.exit(1);
+      }
+    }
     else if (a === '--build-only') out.macosBuildOnly = true;
     else if (a === '--repo-update') out.macosRepoUpdate = true;
     else if (a === '--yes') out.bumpYes = true;
@@ -417,6 +434,7 @@ function validateNoMix(args, mode) {
       ['noUpdate', 'Error: --release-candidate already builds without git pull/pub get'],
       ['testTelegram', 'Error: do not combine --release-candidate with Telegram test flags'],
       ['testUploadFile', 'Error: do not combine --release-candidate with Telegram test flags'],
+      ['testChangelogSummary', 'Error: do not combine --release-candidate with Telegram test flags'],
       ['macosBuildOnly', 'Error: --build-only / --repo-update are only for --platform macos'],
       ['macosRepoUpdate', 'Error: --build-only / --repo-update are only for --platform macos'],
     ];
@@ -438,6 +456,10 @@ function validateNoMix(args, mode) {
       [
         'testUploadFile',
         'Error: do not combine --prepare-release with --test-telegram / --test-upload-file',
+      ],
+      [
+        'testChangelogSummary',
+        'Error: do not combine --prepare-release with Telegram test flags',
       ],
       [
         'macosBuildOnly',
@@ -469,7 +491,11 @@ function validateNoMix(args, mode) {
       console.error('Error: do not use --upload with --bump-version');
       process.exit(1);
     }
-    if (args.testTelegram || args.testUploadFile) {
+    if (
+      args.testTelegram ||
+      args.testUploadFile ||
+      args.testChangelogSummary
+    ) {
       console.error(
         'Error: do not combine --bump-version with --test-telegram / --test-upload-file',
       );
@@ -504,7 +530,11 @@ function validateNoMix(args, mode) {
       );
       process.exit(1);
     }
-    if (args.testTelegram || args.testUploadFile) {
+    if (
+      args.testTelegram ||
+      args.testUploadFile ||
+      args.testChangelogSummary
+    ) {
       console.error(
         'Error: do not combine --platform macos with Telegram test flags',
       );
@@ -829,6 +859,63 @@ async function main() {
       caption: '🧪 Test file upload from tunai-build-script',
     });
     console.log('Test completed. Check your Telegram chat.');
+    return;
+  }
+
+  if (args.testChangelogSummary) {
+    const telegram = getTelegramSection(config);
+    const summaryConfig = getTelegramChangelogSummarySection(config);
+    if (!telegram) {
+      console.error(
+        'Error: Configure telegram.bot_token and telegram.chat_id in tunai_build_script_config.json',
+      );
+      process.exit(1);
+    }
+    if (!summaryConfig) {
+      console.error(
+        'Error: Set telegram.changelog_summary.enabled to true in tunai_build_script_config.json',
+      );
+      process.exit(1);
+    }
+
+    const changelogFile = path.isAbsolute(args.testChangelogSummary)
+      ? args.testChangelogSummary
+      : path.join(projectRoot, args.testChangelogSummary);
+    if (!fs.existsSync(changelogFile)) {
+      console.error(`Error: File not found: ${changelogFile}`);
+      process.exit(1);
+    }
+
+    const platform = args.platform || detectPlatform(projectRoot);
+    if (platform !== 'ios' && platform !== 'android') {
+      console.error(
+        'Error: Specify --platform ios or --platform android for the changelog summary',
+      );
+      process.exit(1);
+    }
+    const appInfo = getAppInfo(projectRoot, platform);
+    const appName = appInfo.app_group || appInfo.name || 'App';
+    const version = getVersion(projectRoot) || 'unknown';
+    console.log(
+      `Generating Telegram changelog summary with Claude (${summaryConfig.model})...`,
+    );
+    const text = await generateChangelogSummary({
+      changelogFile,
+      appName,
+      platform,
+      version,
+      summaryConfig,
+    });
+    const sent = await sendTelegramMessage({
+      botToken: telegram.bot_token,
+      chatId: telegram.chat_id,
+      topicId: topicOverride || telegram.topic_id,
+      text,
+    });
+    if (!sent) {
+      throw new Error('Telegram rejected the AI changelog summary');
+    }
+    console.log('AI changelog summary test completed. Check Telegram.');
     return;
   }
 

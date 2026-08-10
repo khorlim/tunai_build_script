@@ -7,6 +7,7 @@ import {
   getApphostSection,
   getBuildportSection,
   getLoadlySection,
+  getTelegramChangelogSummarySection,
   getTelegramSection,
 } from './config.mjs';
 import { findAndroidBuildFile, findIpaFile } from './artifacts.mjs';
@@ -15,6 +16,7 @@ import { collectBuildportChanges } from './buildport-changes.mjs';
 import { uploadToBuildport } from './buildport-upload.mjs';
 import { uploadToLoadly } from './loadly-upload.mjs';
 import { sendTelegramDocument, sendTelegramMessage } from './telegram.mjs';
+import { generateChangelogSummary } from './changelog-summary.mjs';
 
 function resolvePath(projectRoot, rel) {
   if (!rel) return null;
@@ -265,6 +267,36 @@ export async function performUpload({
   if (changelogConfigured && telegram) {
     const changelogFile = resolvePath(projectRoot, changelogConfigured);
     if (changelogFile && fs.existsSync(changelogFile)) {
+      const summaryConfig = getTelegramChangelogSummarySection(config);
+      if (summaryConfig) {
+        try {
+          console.log(
+            `Generating Telegram changelog summary with Claude (${summaryConfig.model})...`,
+          );
+          const text = await generateChangelogSummary({
+            changelogFile,
+            appName,
+            platform,
+            version,
+            summaryConfig,
+          });
+          const sent = await sendTelegramMessage({
+            botToken: telegram.bot_token,
+            chatId: telegram.chat_id,
+            topicId,
+            text,
+          });
+          if (!sent) {
+            console.warn(
+              'Warning: AI changelog summary was not delivered; continuing with the changelog document.',
+            );
+          }
+        } catch (error) {
+          console.warn(
+            `Warning: AI changelog summary failed; continuing with the changelog document. ${error?.message ?? error}`,
+          );
+        }
+      }
       console.log(`Uploading changelog file: ${changelogFile}`);
       await sendTelegramDocument({
         botToken: telegram.bot_token,
