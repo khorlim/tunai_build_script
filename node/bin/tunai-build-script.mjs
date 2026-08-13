@@ -19,6 +19,7 @@ import { generateChangelogSummary } from '../lib/changelog-summary.mjs';
 import { bumpVersion } from '../lib/bump.mjs';
 import { runMacosTestflightScript } from '../lib/macos-testflight.mjs';
 import { runPrepareRelease } from '../lib/prepare-release.mjs';
+import { getLastTagMatchingPrefix } from '../lib/changelog/changelog-git.mjs';
 import {
   prepareChannelEnvironment,
   prepareReleaseCandidate,
@@ -26,6 +27,11 @@ import {
 } from '../lib/release-candidate.mjs';
 
 const BUMP_TYPES = new Set(['major', 'minor', 'patch', 'build', 'manual']);
+
+function versionFromPrefixedTag(tag, prefix) {
+  const marker = `${prefix.trim()}-v`;
+  return tag.startsWith(marker) ? tag.slice(marker.length) : tag;
+}
 
 function usage() {
   console.log(`Usage: tunai-build-script [options]
@@ -593,6 +599,26 @@ async function main() {
       ? releaseConfig.changelog_paths
       : null;
     const tagPrefix = args.tagPrefix ?? candidate.tagPrefix;
+    let cumulativeChangelog = null;
+    if (candidate.cumulativeChangelog) {
+      const fromRev = await getLastTagMatchingPrefix(
+        projectRoot,
+        candidate.cumulativeChangelog.fromTagPrefix,
+      );
+      if (!fromRev) {
+        throw new Error(
+          `No reachable production tag matches ${candidate.cumulativeChangelog.fromTagPrefix}-v*`,
+        );
+      }
+      cumulativeChangelog = {
+        ...candidate.cumulativeChangelog,
+        fromRev,
+        previousVersion: versionFromPrefixedTag(
+          fromRev,
+          candidate.cumulativeChangelog.fromTagPrefix,
+        ),
+      };
+    }
 
     console.log('Channel: production');
     console.log(`iOS bundle id: ${candidate.iosBundleId}`);
@@ -601,6 +627,14 @@ async function main() {
     console.log(
       `Buildport app group: ${candidate.buildportAppGroup ?? '(pubspec name)'}`,
     );
+    if (cumulativeChangelog) {
+      console.log(
+        `Cumulative changelog: ${cumulativeChangelog.fromRev} .. HEAD -> ${cumulativeChangelog.outputPath}`,
+      );
+      console.log(
+        `Cumulative Telegram destination: chat ${cumulativeChangelog.telegram.chat_id}, topic ${cumulativeChangelog.telegram.topic_id}`,
+      );
+    }
 
     if (args.dryRun) {
       console.log('\nDry run — would now:');
@@ -611,9 +645,19 @@ async function main() {
             ? `, changelog scoped to: ${changelogPaths.join(' ')}`
             : ''),
       );
+      if (cumulativeChangelog) {
+        console.log(
+          `     Also generate cumulative tester changelog from ${cumulativeChangelog.fromRev}`,
+        );
+      }
       console.log(
         '  3. build IPA with production ad-hoc signing, validate its bundle/config, and upload to Buildport',
       );
+      if (cumulativeChangelog) {
+        console.log(
+          '  4. send the cumulative AI summary and changelog to its configured Telegram topic',
+        );
+      }
       return;
     }
 
@@ -624,6 +668,12 @@ async function main() {
       changelogTo: args.changelogTo,
       tagPrefix,
       changelogPaths,
+      supplementalTesterChangelog: cumulativeChangelog
+        ? {
+            fromRev: cumulativeChangelog.fromRev,
+            outputPath: cumulativeChangelog.outputPath,
+          }
+        : null,
     });
 
     const changelogEffective =
@@ -640,6 +690,18 @@ async function main() {
       topicIdOverride:
         args.topicId || process.env.TELEGRAM_TOPIC_ID || undefined,
       previousVersion: release.previousVersion,
+      additionalChangelogDeliveries: cumulativeChangelog
+        ? [
+            {
+              changelogRelativePath: cumulativeChangelog.outputPath,
+              telegram: cumulativeChangelog.telegram,
+              previousVersion: cumulativeChangelog.previousVersion,
+              label: 'cumulative changelog',
+              summaryTitle: 'Full Release Summary',
+              documentTitle: 'Full changelog since production',
+            },
+          ]
+        : [],
       validateBuildArtifact: (ipaPath) =>
         validateIosReleaseCandidateArtifact({
           ipaPath,

@@ -17,11 +17,37 @@ import { getVersion } from './pubspec.mjs';
 const ENGINEERING_CHANGELOG = 'changelog.md';
 const TESTER_CHANGELOG = 'changelog_tester.md';
 
+function validateSupplementalTesterChangelog(value) {
+  if (value === null || value === undefined) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('supplementalTesterChangelog must be an object');
+  }
+  const fromRev =
+    typeof value.fromRev === 'string' ? value.fromRev.trim() : '';
+  const outputPath =
+    typeof value.outputPath === 'string' ? value.outputPath.trim() : '';
+  const normalizedOutputPath = outputPath ? path.normalize(outputPath) : '';
+  if (!fromRev) {
+    throw new Error('supplementalTesterChangelog.fromRev is required');
+  }
+  if (
+    !normalizedOutputPath ||
+    path.isAbsolute(normalizedOutputPath) ||
+    normalizedOutputPath === '..' ||
+    normalizedOutputPath.startsWith(`..${path.sep}`)
+  ) {
+    throw new Error(
+      'supplementalTesterChangelog.outputPath must be project-relative',
+    );
+  }
+  return { fromRev, outputPath: normalizedOutputPath };
+}
+
 /**
  * @param {string} projectRoot
  * @returns {string[]}
  */
-function collectTrackedRelativePaths(projectRoot) {
+function collectTrackedRelativePaths(projectRoot, additionalPaths = []) {
   const rels = ['pubspec.yaml', ENGINEERING_CHANGELOG, TESTER_CHANGELOG];
   const optional = [
     'ios/Runner/Info.plist',
@@ -32,7 +58,7 @@ function collectTrackedRelativePaths(projectRoot) {
   for (const rel of optional) {
     if (fs.existsSync(path.join(projectRoot, rel))) rels.push(rel);
   }
-  return rels;
+  return [...new Set([...rels, ...additionalPaths])];
 }
 
 /**
@@ -276,6 +302,36 @@ async function writeChangelogs(projectRoot, fromRev, toRev, pathspecs = null) {
   console.log(`Wrote ${testerPath}`);
 }
 
+async function writeSupplementalTesterChangelog({
+  projectRoot,
+  fromRev,
+  toRev,
+  outputPath,
+  pathspecs,
+}) {
+  console.log(
+    `Generating cumulative tester changelog: ${fromRev} .. ${toRev}`,
+  );
+  if (pathspecs && pathspecs.length) {
+    console.log(`Changelog scoped to paths: ${pathspecs.join(' ')}`);
+  }
+
+  const tester = await generateTesterChangelogMarkdown(
+    projectRoot,
+    fromRev,
+    toRev,
+    { pathspecs },
+  );
+  for (const warning of tester.warnings) {
+    console.warn(`Warning: ${warning}`);
+  }
+
+  const fullOutputPath = path.join(projectRoot, outputPath);
+  fs.mkdirSync(path.dirname(fullOutputPath), { recursive: true });
+  fs.writeFileSync(fullOutputPath, tester.markdown, 'utf8');
+  console.log(`Wrote ${fullOutputPath}`);
+}
+
 /**
  * @param {string} projectRoot
  * @param {string[]} relativePaths
@@ -301,6 +357,7 @@ async function gitCommit(projectRoot, relativePaths, message) {
  *   changelogTo?: string | null,
  *   tagPrefix?: string | null,
  *   changelogPaths?: string[] | null,
+ *   supplementalTesterChangelog?: { fromRev: string, outputPath: string } | null,
  * }} opts
  */
 export async function runPrepareRelease(opts) {
@@ -310,7 +367,14 @@ export async function runPrepareRelease(opts) {
   await assertGitRepo(projectRoot);
   await assertCleanWorkingTree(projectRoot);
 
-  const trackedPaths = collectTrackedRelativePaths(projectRoot);
+  const supplemental = validateSupplementalTesterChangelog(
+    opts.supplementalTesterChangelog,
+  );
+  const supplementalPaths = supplemental ? [supplemental.outputPath] : [];
+  const trackedPaths = collectTrackedRelativePaths(
+    projectRoot,
+    supplementalPaths,
+  );
   const snapshots = snapshotFiles(projectRoot, trackedPaths);
   const initialHead = await resolveInitialHead(projectRoot);
 
@@ -375,8 +439,20 @@ export async function runPrepareRelease(opts) {
 
     console.log('\n[2/6] Generating changelogs…');
     await writeChangelogs(projectRoot, changelogFrom, changelogTo, opts.changelogPaths ?? null);
+    if (supplemental) {
+      await writeSupplementalTesterChangelog({
+        projectRoot,
+        fromRev: supplemental.fromRev,
+        toRev: changelogTo,
+        outputPath: supplemental.outputPath,
+        pathspecs: opts.changelogPaths ?? null,
+      });
+    }
 
-    const releasePaths = collectTrackedRelativePaths(projectRoot);
+    const releasePaths = collectTrackedRelativePaths(
+      projectRoot,
+      supplementalPaths,
+    );
     const commitMessage = `chore(release): v${version}`;
 
     console.log('\n[3/6] Committing…');
@@ -420,6 +496,12 @@ export async function runPrepareRelease(opts) {
     return {
       previousVersion: bumpResult?.previousVersion ?? null,
       newVersion: version,
+      supplementalTesterChangelog: supplemental
+        ? {
+            ...supplemental,
+            toRev: changelogTo,
+          }
+        : null,
     };
   } catch (e) {
     const msg = String(e?.message ?? e);

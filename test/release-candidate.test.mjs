@@ -12,6 +12,7 @@ import {
   readDotEnvValue,
   validateIosReleaseCandidateArtifact,
 } from '../node/lib/release-candidate.mjs';
+import { runPrepareRelease } from '../node/lib/prepare-release.mjs';
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -83,6 +84,14 @@ function candidateConfig() {
   };
 }
 
+function runGit(projectRoot, args) {
+  return execFileSync('git', args, {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
 test('dotenv overrides replace existing values and append missing values', () => {
   const result = applyDotEnvOverrides(
     'CONFIG_URL=https://example.test\nTestVersion=true\n',
@@ -141,6 +150,152 @@ test('release candidate writes production channel and forces Buildport', (t) => 
     ),
     /APP_DISPLAY_NAME = Example/,
   );
+});
+
+test('release candidate validates a cumulative production changelog destination', (t) => {
+  const projectRoot = makeTempProject();
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  const config = candidateConfig();
+  config.telegram = {
+    bot_token: 'test-bot-token',
+    chat_id: '-1001',
+    topic_id: '20',
+    changelog_summary: {
+      enabled: true,
+      provider: 'claude_cli',
+      model: 'haiku',
+      max_chars: 3000,
+      timeout_seconds: 240,
+      failure_mode: 'warn',
+    },
+  };
+  config.release_candidate.cumulative_changelog = {
+    from_tag_prefix: 'example-prod',
+    path: 'changelog_tester_since_prod.md',
+    telegram: {
+      chat_id: '-1002',
+      topic_id: '30',
+    },
+  };
+
+  const result = prepareReleaseCandidate({
+    projectRoot,
+    config,
+    platform: 'ios',
+    writeFiles: false,
+  });
+
+  assert.deepEqual(result.cumulativeChangelog, {
+    fromTagPrefix: 'example-prod',
+    outputPath: 'changelog_tester_since_prod.md',
+    telegram: {
+      bot_token: 'test-bot-token',
+      chat_id: '-1002',
+      topic_id: '30',
+    },
+  });
+});
+
+test('cumulative changelog rejects unsafe paths and missing summaries', (t) => {
+  const projectRoot = makeTempProject();
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  const config = candidateConfig();
+  config.telegram = {
+    bot_token: 'test-bot-token',
+    chat_id: '-1001',
+  };
+  config.release_candidate.cumulative_changelog = {
+    from_tag_prefix: 'example-prod',
+    path: '../outside.md',
+    telegram: {
+      chat_id: '-1002',
+      topic_id: '30',
+    },
+  };
+
+  assert.throws(
+    () =>
+      prepareReleaseCandidate({
+        projectRoot,
+        config,
+        platform: 'ios',
+        writeFiles: false,
+      }),
+    /project-relative Markdown path/,
+  );
+
+  config.release_candidate.cumulative_changelog.path =
+    'changelog_tester_since_prod.md';
+  assert.throws(
+    () =>
+      prepareReleaseCandidate({
+        projectRoot,
+        config,
+        platform: 'ios',
+        writeFiles: false,
+      }),
+    /changelog_summary.enabled=true/,
+  );
+});
+
+test('prepare release commits the cumulative tester changelog', async (t) => {
+  const projectRoot = makeTempProject();
+  const remoteRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'tunai-release-candidate-remote-'),
+  );
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(remoteRoot, { recursive: true, force: true }));
+
+  runGit(projectRoot, ['init', '-b', 'main']);
+  runGit(projectRoot, ['config', 'user.name', 'Release Test']);
+  runGit(projectRoot, ['config', 'user.email', 'release@example.test']);
+  runGit(projectRoot, ['add', '.']);
+  runGit(projectRoot, ['commit', '-m', 'chore: initial release']);
+  runGit(projectRoot, ['tag', 'example-prod-v1.0.0+1']);
+  runGit(projectRoot, ['tag', 'example-rc-v1.0.0+1']);
+
+  fs.writeFileSync(
+    path.join(projectRoot, 'feature.txt'),
+    'customer-visible report export\n',
+  );
+  runGit(projectRoot, ['add', 'feature.txt']);
+  runGit(projectRoot, [
+    'commit',
+    '-m',
+    'feat(reports): add export (#1)',
+  ]);
+
+  execFileSync('git', ['init', '--bare', remoteRoot], {
+    stdio: 'ignore',
+  });
+  runGit(projectRoot, ['remote', 'add', 'origin', remoteRoot]);
+  runGit(projectRoot, ['push', '-u', 'origin', 'main', '--tags']);
+
+  const result = await runPrepareRelease({
+    projectRoot,
+    bumpType: 'build',
+    changelogFrom: 'example-rc-v1.0.0+1',
+    changelogTo: 'HEAD',
+    tagPrefix: 'example-rc',
+    supplementalTesterChangelog: {
+      fromRev: 'example-prod-v1.0.0+1',
+      outputPath: 'changelog_tester_since_prod.md',
+    },
+  });
+
+  assert.equal(result.newVersion, '1.0.0+2');
+  assert.equal(
+    result.supplementalTesterChangelog.fromRev,
+    'example-prod-v1.0.0+1',
+  );
+  const cumulative = runGit(projectRoot, [
+    'show',
+    'HEAD:changelog_tester_since_prod.md',
+  ]);
+  assert.match(cumulative, /Release v1\.0\.0\+2/);
+  assert.match(cumulative, /example-prod-v1\.0\.0\+1/);
+  assert.match(cumulative, /### Merged PRs/);
+  assert.equal(runGit(projectRoot, ['status', '--porcelain']), '');
 });
 
 test('test channel writes an explicit test environment', (t) => {

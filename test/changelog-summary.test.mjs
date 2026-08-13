@@ -210,3 +210,20 @@ test('Telegram summary shows the version transition when available', () => {
     /<b>Version:<\/b> <code>1\.0\.184\+283 → 1\.0\.184\+284<\/code>/,
   );
 });
+
+test('Telegram summary supports a cumulative release title', () => {
+  const message = formatTelegramSummaryMessage({
+    summary: '✨ Features (1)\nReports\n• Add SKU exports',
+    appName: 'TunaiPro',
+    platform: 'ios',
+    previousVersion: '1.0.183+277',
+    version: '1.0.184+284',
+    title: 'Full Release Summary',
+  });
+
+  assert.match(message, /🤖 <b>Full Release Summary<\/b>/);
+  assert.match(
+    message,
+    /<code>1\.0\.183\+277 → 1\.0\.184\+284<\/code>/,
+  );
+});

@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
-import { getBuildportSection } from './config.mjs';
+import {
+  getBuildportSection,
+  getTelegramChangelogSummarySection,
+  getTelegramSection,
+} from './config.mjs';
 
 function trimEnvValue(value) {
   const trimmed = String(value ?? '').trim();
@@ -60,6 +64,98 @@ function resolveProjectPath(projectRoot, configuredPath) {
   return path.isAbsolute(configuredPath)
     ? configuredPath
     : path.join(projectRoot, configuredPath);
+}
+
+function parseCumulativeChangelogConfig(config, releaseCandidate) {
+  const cumulative = releaseCandidate?.cumulative_changelog;
+  if (cumulative === undefined) return null;
+  if (
+    !cumulative ||
+    typeof cumulative !== 'object' ||
+    Array.isArray(cumulative)
+  ) {
+    throw new Error(
+      'release_candidate.cumulative_changelog must be an object',
+    );
+  }
+
+  const fromTagPrefix =
+    typeof cumulative.from_tag_prefix === 'string'
+      ? cumulative.from_tag_prefix.trim()
+      : '';
+  if (!fromTagPrefix) {
+    throw new Error(
+      'release_candidate.cumulative_changelog.from_tag_prefix is required',
+    );
+  }
+
+  const outputPath =
+    typeof cumulative.path === 'string' ? cumulative.path.trim() : '';
+  const normalizedOutputPath = outputPath ? path.normalize(outputPath) : '';
+  if (
+    !normalizedOutputPath ||
+    path.isAbsolute(normalizedOutputPath) ||
+    normalizedOutputPath === '..' ||
+    normalizedOutputPath.startsWith(`..${path.sep}`) ||
+    normalizedOutputPath === 'changelog.md' ||
+    normalizedOutputPath === 'changelog_tester.md' ||
+    path.extname(normalizedOutputPath).toLowerCase() !== '.md'
+  ) {
+    throw new Error(
+      'release_candidate.cumulative_changelog.path must be a project-relative Markdown path',
+    );
+  }
+
+  const destination = cumulative.telegram;
+  if (
+    !destination ||
+    typeof destination !== 'object' ||
+    Array.isArray(destination)
+  ) {
+    throw new Error(
+      'release_candidate.cumulative_changelog.telegram must be an object',
+    );
+  }
+  const chatId =
+    typeof destination.chat_id === 'string'
+      ? destination.chat_id.trim()
+      : '';
+  const topicId =
+    typeof destination.topic_id === 'string'
+      ? destination.topic_id.trim()
+      : '';
+  if (!chatId) {
+    throw new Error(
+      'release_candidate.cumulative_changelog.telegram.chat_id is required',
+    );
+  }
+  if (!topicId) {
+    throw new Error(
+      'release_candidate.cumulative_changelog.telegram.topic_id is required',
+    );
+  }
+
+  const primaryTelegram = getTelegramSection(config);
+  if (!primaryTelegram) {
+    throw new Error(
+      'release_candidate.cumulative_changelog requires telegram.bot_token and the primary telegram destination',
+    );
+  }
+  if (!getTelegramChangelogSummarySection(config)) {
+    throw new Error(
+      'release_candidate.cumulative_changelog requires telegram.changelog_summary.enabled=true',
+    );
+  }
+
+  return {
+    fromTagPrefix,
+    outputPath: normalizedOutputPath,
+    telegram: {
+      bot_token: primaryTelegram.bot_token,
+      chat_id: chatId,
+      topic_id: topicId,
+    },
+  };
 }
 
 export function prepareChannelEnvironment({
@@ -253,6 +349,10 @@ export function prepareReleaseCandidate({
     Object.prototype.hasOwnProperty.call(releaseCandidate, 'tag_prefix')
       ? releaseCandidate.tag_prefix
       : 'release-candidate';
+  const cumulativeChangelog = parseCumulativeChangelogConfig(
+    config,
+    releaseCandidate,
+  );
 
   const effectiveConfig = {
     ...config,
@@ -290,6 +390,7 @@ export function prepareReleaseCandidate({
     envPath,
     channelFile,
     tagPrefix,
+    cumulativeChangelog,
     buildportAppGroup: buildport.app_group,
   };
 }

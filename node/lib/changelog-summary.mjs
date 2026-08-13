@@ -311,6 +311,7 @@ export function formatTelegramSummaryMessage({
   version,
   previousVersion,
   maxChars = DEFAULT_MAX_CHARS,
+  title = 'Release Summary',
 }) {
   const body = truncateText(summary, maxChars);
   const versionLabel =
@@ -318,7 +319,7 @@ export function formatTelegramSummaryMessage({
       ? `${previousVersion} → ${version}`
       : version;
   return (
-    `🤖 <b>Release Summary</b>\n\n` +
+    `🤖 <b>${escapeTelegramHtml(title)}</b>\n\n` +
     `<b>App:</b> ${escapeTelegramHtml(appName)}\n` +
     `<b>Platform:</b> ${escapeTelegramHtml(platform)}\n` +
     `<b>Version:</b> <code>${escapeTelegramHtml(versionLabel)}</code>\n\n` +
@@ -333,6 +334,7 @@ export async function generateChangelogSummary({
   version,
   previousVersion,
   summaryConfig,
+  title,
   runClaude = runClaudeSummary,
 }) {
   const content = fs.readFileSync(changelogFile, 'utf8');
@@ -357,5 +359,6 @@ export async function generateChangelogSummary({
     version,
     previousVersion,
     maxChars: summaryConfig.max_chars,
+    title,
   });
 }

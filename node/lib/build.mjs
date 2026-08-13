@@ -23,6 +23,76 @@ function resolvePath(projectRoot, rel) {
   return path.isAbsolute(rel) ? rel : path.join(projectRoot, rel);
 }
 
+export async function deliverTelegramChangelog({
+  projectRoot,
+  changelogRelativePath,
+  telegram,
+  summaryConfig,
+  appName,
+  platform,
+  version,
+  previousVersion,
+  label = 'changelog',
+  summaryTitle = 'Release Summary',
+  documentTitle = 'Changelog',
+  generateSummaryImpl = generateChangelogSummary,
+  sendMessageImpl = sendTelegramMessage,
+  sendDocumentImpl = sendTelegramDocument,
+}) {
+  const changelogFile = resolvePath(projectRoot, changelogRelativePath);
+  if (!changelogFile || !fs.existsSync(changelogFile)) {
+    console.warn(
+      `Warning: ${documentTitle} file not found: ${changelogFile || changelogRelativePath}`,
+    );
+    return false;
+  }
+
+  if (summaryConfig) {
+    try {
+      console.log(
+        `Generating Telegram ${label} summary with Claude (${summaryConfig.model})...`,
+      );
+      const text = await generateSummaryImpl({
+        changelogFile,
+        appName,
+        platform,
+        version,
+        previousVersion,
+        summaryConfig,
+        title: summaryTitle,
+      });
+      const sent = await sendMessageImpl({
+        botToken: telegram.bot_token,
+        chatId: telegram.chat_id,
+        topicId: telegram.topic_id,
+        text,
+      });
+      if (!sent) {
+        console.warn(
+          `Warning: AI ${label} summary was not delivered; continuing with the ${label} document.`,
+        );
+      }
+    } catch (error) {
+      console.warn(
+        `Warning: AI ${label} summary failed; continuing with the ${label} document. ${error?.message ?? error}`,
+      );
+    }
+  }
+
+  const uploadLabel =
+    label === 'changelog' ? 'changelog' : `${label}`;
+  console.log(`Uploading ${uploadLabel} file: ${changelogFile}`);
+  return sendDocumentImpl({
+    botToken: telegram.bot_token,
+    chatId: telegram.chat_id,
+    filePath: changelogFile,
+    topicId: telegram.topic_id,
+    caption:
+      `📝 ${documentTitle}\n\n` +
+      `App: ${appName}\nPlatform: ${platform}\nVersion: ${version}`,
+  });
+}
+
 function resolveUploadProvider(config, platform) {
   const providers = config?.upload?.providers;
   const byPlatform =
@@ -81,6 +151,7 @@ export async function performUpload({
   topicIdOverride,
   buildFilePath,
   previousVersion,
+  additionalChangelogDeliveries = [],
 }) {
   console.log(`Starting the upload process for ${platform}...`);
 
@@ -266,52 +337,37 @@ export async function performUpload({
     (config.upload && config.upload.changelog_path) ||
     null;
   if (changelogConfigured && telegram) {
-    const changelogFile = resolvePath(projectRoot, changelogConfigured);
-    if (changelogFile && fs.existsSync(changelogFile)) {
-      const summaryConfig = getTelegramChangelogSummarySection(config);
-      if (summaryConfig) {
-        try {
-          console.log(
-            `Generating Telegram changelog summary with Claude (${summaryConfig.model})...`,
-          );
-          const text = await generateChangelogSummary({
-            changelogFile,
-            appName,
-            platform,
-            version,
-            previousVersion,
-            summaryConfig,
-          });
-          const sent = await sendTelegramMessage({
-            botToken: telegram.bot_token,
-            chatId: telegram.chat_id,
-            topicId,
-            text,
-          });
-          if (!sent) {
-            console.warn(
-              'Warning: AI changelog summary was not delivered; continuing with the changelog document.',
-            );
-          }
-        } catch (error) {
-          console.warn(
-            `Warning: AI changelog summary failed; continuing with the changelog document. ${error?.message ?? error}`,
-          );
-        }
-      }
-      console.log(`Uploading changelog file: ${changelogFile}`);
-      await sendTelegramDocument({
-        botToken: telegram.bot_token,
-        chatId: telegram.chat_id,
-        filePath: changelogFile,
-        topicId,
-        caption:
-          `📝 Changelog\n\nApp: ${appName}\nPlatform: ${platform}\nVersion: ${version}`,
+    await deliverTelegramChangelog({
+      projectRoot,
+      changelogRelativePath: changelogConfigured,
+      telegram: {
+        ...telegram,
+        topic_id: topicId,
+      },
+      summaryConfig: getTelegramChangelogSummarySection(config),
+      appName,
+      platform,
+      version,
+      previousVersion,
+    });
+  }
+
+  if (additionalChangelogDeliveries.length) {
+    const summaryConfig = getTelegramChangelogSummarySection(config);
+    for (const delivery of additionalChangelogDeliveries) {
+      await deliverTelegramChangelog({
+        projectRoot,
+        changelogRelativePath: delivery.changelogRelativePath,
+        telegram: delivery.telegram,
+        summaryConfig,
+        appName,
+        platform,
+        version,
+        previousVersion: delivery.previousVersion,
+        label: delivery.label ?? 'additional changelog',
+        summaryTitle: delivery.summaryTitle ?? 'Release Summary',
+        documentTitle: delivery.documentTitle ?? 'Changelog',
       });
-    } else {
-      console.warn(
-        `Warning: Changelog file not found: ${changelogFile || changelogConfigured}`,
-      );
     }
   }
 }
@@ -354,6 +410,7 @@ export async function performBuild({
   topicIdOverride,
   validateBuildArtifact,
   previousVersion,
+  additionalChangelogDeliveries,
 }) {
   let buildSuccess = false;
   let errorMessage;
@@ -422,6 +479,7 @@ export async function performBuild({
       topicIdOverride,
       buildFilePath: artifact.path,
       previousVersion,
+      additionalChangelogDeliveries,
     });
 
     console.log('Build and upload process completed successfully!');

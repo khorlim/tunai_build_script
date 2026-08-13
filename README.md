@@ -33,7 +33,7 @@ Copy `example/tunai_build_script_config.example.json` to your Flutter project ro
 | `upload.providers` | Optional per-platform provider map, e.g. `{ "ios": "apphost", "android": "telegram_apk" }` |
 | `upload.provider` | Legacy/default provider fallback: `"apphost"` (default), `"buildport"`, `"loadly"`, or `"telegram_apk"` |
 | `prepare_release` | Optional defaults for `--prepare-release`, including `tag_prefix` (`"release"` → `release-v1.0.1+11`, `""` → `v1.0.1+11`) |
-| `release_candidate` | Optional `tag_prefix` for `--release-candidate` (default: `release-candidate`) |
+| `release_candidate` | Optional `tag_prefix` for `--release-candidate` (default: `release-candidate`). Optional `cumulative_changelog` generates a second tester changelog from the latest reachable production tag and sends its Claude summary plus document to a separate Telegram destination |
 | `channel.test` | Required for `--test-release`: test identifiers plus `env_overrides.TestVersion: "true"`; optional `env_file` |
 | `channel.prod` | Required for `--release-candidate`: production `ios_bundle_id`, `ios_display_name`, `ios_export_options_plist`, and `env_overrides.TestVersion: "false"`; optional `env_file` |
 | `apphost` | Required when the selected provider is `apphost`: `user_id`, `app_id`, `key`, `ios_bundle_identifier`, `android_package_name` |
@@ -51,6 +51,8 @@ Keep channel switches such as `TestVersion` out of `.env.tunai.defaults`. The te
 `telegram_apk` is Android-only and sends the built APK file directly to Telegram as a document.
 
 To summarize `upload.changelog_path` before its Telegram document is sent, enable `telegram.changelog_summary` as shown in the example config. The `claude_cli` provider runs `claude -p --model haiku` with tools and session persistence disabled. It removes Anthropic API environment variables from the child process so the Claude CLI uses its signed-in subscription. Summary generation or delivery failure only logs a warning; it never blocks the original changelog document or turns a successful release into a failed one. Use `--test-changelog-summary changelog_tester.md --platform ios` to generate and send only the summary.
+
+For release candidates, `release_candidate.cumulative_changelog` keeps the normal previous-RC changelog and adds a second tester document covering the latest reachable `<from_tag_prefix>-v*` production tag through the current candidate. Its `path` must be a project-relative Markdown file. Its `telegram.chat_id` and `telegram.topic_id` select the separate release topic; the bot token and Claude summary settings are inherited from the top-level `telegram` section. The cumulative summary is titled `Full Release Summary` and shows the production-to-RC version range.
 
 `buildport` uploads the generated `.apk` or `.ipa` to `https://support.tunai.io/buildport/api/releases` as multipart field `apps` and returns the tester share URL from the API response. It sends `app_group` from `buildport.app_group` when configured, otherwise pubspec `name`; `release_version` from pubspec `version`; `title` from app display name + version; and `notes` from pubspec `description`. When a tester changelog exists (`buildport.changes_path`, default `changelog_tester.md`, as written by `--generate-changelog`/`--prepare-release`), its PR entries are also sent as a `changes` JSON array (`text`, `pr_number`, `pr_url` from each repo's github.com origin, `module` from the submodule name, and `category` — feature/fix/improvement/internal — inferred from the PR title) so Buildport shows a per-version tester checklist grouped by module. Only the newest `## Release` section is read; if the file is missing, the upload proceeds without changes.
 
@@ -108,7 +110,15 @@ Required configuration:
 ```json
 {
   "release_candidate": {
-    "tag_prefix": "my-app-rc"
+    "tag_prefix": "my-app-rc",
+    "cumulative_changelog": {
+      "from_tag_prefix": "my-app-prod",
+      "path": "changelog_tester_since_prod.md",
+      "telegram": {
+        "chat_id": "${TELEGRAM_RELEASE_CHAT_ID}",
+        "topic_id": "${TELEGRAM_RELEASE_TOPIC_ID}"
+      }
+    }
   },
   "channel": {
     "prod": {
@@ -135,6 +145,8 @@ Before upload, the CLI opens the generated IPA and requires both:
 - The packaged `.env.tunai.defaults`, when present, does not define `TestVersion`.
 
 The resulting Buildport IPA is ad-hoc signed for registered tester devices. It is not the App Store binary; build the same approved commit later with App Store signing for TestFlight/App Store Connect.
+
+When `release_candidate.cumulative_changelog` is configured, the preflight also requires a reachable production tag matching `<from_tag_prefix>-v*`. The generated cumulative tester changelog is included in the release commit. After the normal Buildport notification, incremental AI summary, and incremental changelog are sent to the primary Telegram topic, the CLI sends a separate cumulative AI summary and document to the configured cumulative destination.
 
 ### Prepare release (`--prepare-release`)
 

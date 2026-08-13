@@ -11,7 +11,15 @@
     "tag_prefix": "release"
   },
   "release_candidate": {
-    "tag_prefix": "my-app-rc"
+    "tag_prefix": "my-app-rc",
+    "cumulative_changelog": {
+      "from_tag_prefix": "my-app-prod",
+      "path": "changelog_tester_since_prod.md",
+      "telegram": {
+        "chat_id": "${TELEGRAM_RELEASE_CHAT_ID}",
+        "topic_id": "${TELEGRAM_RELEASE_TOPIC_ID}"
+      }
+    }
   },
   "channel": {
     "test": {
