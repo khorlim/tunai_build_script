@@ -5,6 +5,7 @@ import {
   buildClaudeArgs,
   escapeTelegramHtml,
   formatGroupedSummary,
+  formatTelegramSummaryBody,
   formatTelegramSummaryMessage,
   GROUPED_SUMMARY_SCHEMA,
   parseClaudeOutput,
@@ -118,26 +119,24 @@ test('Claude structured output is parsed and grouped by type then feature', () =
 
   assert.equal(
     parseClaudeOutput(JSON.stringify({ structured_output: structuredOutput })),
-    `What changed
-
-Fixes
+    `🛠 Fixes (2)
 Expenses
 • Center the empty chart legend
 Vouchers
 • Allow vouchers to be deselected
 
-Features
+✨ Features (3)
 Menu
 • Add sidebar navigation
 • Support custom menus
 Inventory
 • Add receive-note expiry dates
 
-Test focus
+🧪 Test focus (2 checks)
 Menu
-• Create and reorder a custom menu
+☐ Create and reorder a custom menu
 Vouchers
-• Select and deselect a voucher`,
+☐ Select and deselect a voucher`,
   );
   assert.throws(() => parseClaudeOutput('not-json'), /invalid JSON/);
   assert.throws(
@@ -165,7 +164,7 @@ test('grouped summary rejects empty changes and test focus', () => {
 
 test('Telegram summary escapes HTML and respects the body limit', () => {
   const message = formatTelegramSummaryMessage({
-    summary: 'What changed\n• A < B & C > D',
+    summary: '🛠 Fixes (1)\nOrders <checkout>\n• A < B & C > D',
     appName: 'Tunai <Pro>',
     platform: 'ios',
     version: '1.0&2',
@@ -173,8 +172,41 @@ test('Telegram summary escapes HTML and respects the body limit', () => {
   });
 
   assert.match(message, /Tunai &lt;Pro&gt;/);
+  assert.match(message, /🤖 <b>Release Summary<\/b>/);
+  assert.doesNotMatch(message, /AI Release Summary/);
   assert.match(message, /1\.0&amp;2/);
   assert.match(message, /A &lt; B &amp; C &gt; D/);
+  assert.match(message, /<b>🛠 Fixes \(1\)<\/b>/);
+  assert.match(message, /<i>Orders &lt;checkout&gt;<\/i>/);
   assert.equal(truncateText('😀😀😀', 2), '😀…');
   assert.equal(escapeTelegramHtml('<&>'), '&lt;&amp;&gt;');
+});
+
+test('Telegram summary styles section headings and escapes generated text', () => {
+  const body = formatTelegramSummaryBody(
+    '🛠 Fixes (1)\nOrders <checkout>\n• Correct A & B\n\n✨ Features (1)\nReports\n• Add export\n\n🧪 Test focus (1 check)\nOrders\n☐ Save an order',
+  );
+
+  assert.match(body, /^<b>🛠 Fixes \(1\)<\/b>/);
+  assert.match(body, /<b>✨ Features \(1\)<\/b>/);
+  assert.match(body, /<b>🧪 Test focus \(1 check\)<\/b>/);
+  assert.match(body, /<i>Orders &lt;checkout&gt;<\/i>/);
+  assert.match(body, /<i>Reports<\/i>/);
+  assert.match(body, /Correct A &amp; B/);
+  assert.match(body, /☐ Save an order/);
+});
+
+test('Telegram summary shows the version transition when available', () => {
+  const message = formatTelegramSummaryMessage({
+    summary: 'What changed\n• Correct totals',
+    appName: 'tunaipro',
+    platform: 'ios',
+    previousVersion: '1.0.184+283',
+    version: '1.0.184+284',
+  });
+
+  assert.match(
+    message,
+    /<b>Version:<\/b> <code>1\.0\.184\+283 → 1\.0\.184\+284<\/code>/,
+  );
 });

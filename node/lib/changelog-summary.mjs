@@ -52,6 +52,31 @@ export function escapeTelegramHtml(value) {
     .replaceAll('>', '&gt;');
 }
 
+export function formatTelegramSummaryBody(value) {
+  const legacyHeadings = new Set([
+    'What changed',
+    'Fixes',
+    'Features',
+    'Test focus',
+  ]);
+  const sectionHeading =
+    /^(?:🛠 Fixes \(\d+\)|✨ Features \(\d+\)|🧪 Test focus \(\d+ checks?\))$/u;
+  return String(value)
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim();
+      const escaped = escapeTelegramHtml(line);
+      if (legacyHeadings.has(trimmed) || sectionHeading.test(trimmed)) {
+        return `<b>${escaped}</b>`;
+      }
+      if (trimmed && !trimmed.startsWith('• ') && !trimmed.startsWith('☐ ')) {
+        return `<i>${escaped}</i>`;
+      }
+      return escaped;
+    })
+    .join('\n');
+}
+
 export function truncateText(value, maxChars) {
   const chars = Array.from(String(value).trim());
   if (chars.length <= maxChars) return chars.join('');
@@ -178,21 +203,30 @@ export function formatGroupedSummary(structuredOutput) {
     throw new Error('Claude returned no test focus');
   }
 
-  const lines = ['What changed'];
-  const appendGroups = (heading, groups) => {
+  const lines = [];
+  const appendGroups = (heading, groups, itemPrefix = '•') => {
     if (groups.length === 0) return;
-    lines.push('', heading);
+    const itemCount = groups.reduce(
+      (count, group) => count + group.items.length,
+      0,
+    );
+    const suffix =
+      heading === '🧪 Test focus'
+        ? ` (${itemCount} ${itemCount === 1 ? 'check' : 'checks'})`
+        : ` (${itemCount})`;
+    if (lines.length) lines.push('');
+    lines.push(`${heading}${suffix}`);
     for (const group of groups) {
       lines.push(group.feature.trim());
       for (const item of group.items) {
-        lines.push(`• ${item.trim()}`);
+        lines.push(`${itemPrefix} ${item.trim()}`);
       }
     }
   };
 
-  appendGroups('Fixes', structuredOutput.fixes);
-  appendGroups('Features', structuredOutput.features);
-  appendGroups('Test focus', structuredOutput.test_focus);
+  appendGroups('🛠 Fixes', structuredOutput.fixes);
+  appendGroups('✨ Features', structuredOutput.features);
+  appendGroups('🧪 Test focus', structuredOutput.test_focus, '☐');
   return lines.join('\n');
 }
 
@@ -275,15 +309,20 @@ export function formatTelegramSummaryMessage({
   appName,
   platform,
   version,
+  previousVersion,
   maxChars = DEFAULT_MAX_CHARS,
 }) {
   const body = truncateText(summary, maxChars);
+  const versionLabel =
+    previousVersion && previousVersion !== version
+      ? `${previousVersion} → ${version}`
+      : version;
   return (
-    `🤖 <b>AI Release Summary</b>\n\n` +
-    `App: ${escapeTelegramHtml(appName)}\n` +
-    `Platform: ${escapeTelegramHtml(platform)}\n` +
-    `Version: ${escapeTelegramHtml(version)}\n\n` +
-    escapeTelegramHtml(body)
+    `🤖 <b>Release Summary</b>\n\n` +
+    `<b>App:</b> ${escapeTelegramHtml(appName)}\n` +
+    `<b>Platform:</b> ${escapeTelegramHtml(platform)}\n` +
+    `<b>Version:</b> <code>${escapeTelegramHtml(versionLabel)}</code>\n\n` +
+    formatTelegramSummaryBody(body)
   );
 }
 
@@ -292,6 +331,7 @@ export async function generateChangelogSummary({
   appName,
   platform,
   version,
+  previousVersion,
   summaryConfig,
   runClaude = runClaudeSummary,
 }) {
@@ -315,6 +355,7 @@ export async function generateChangelogSummary({
     appName,
     platform,
     version,
+    previousVersion,
     maxChars: summaryConfig.max_chars,
   });
 }

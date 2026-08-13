@@ -617,7 +617,7 @@ async function main() {
       return;
     }
 
-    await runPrepareRelease({
+    const release = await runPrepareRelease({
       projectRoot,
       bumpType: 'build',
       changelogFrom: args.changelogFrom,
@@ -639,6 +639,7 @@ async function main() {
       changelogRelativePath: changelogEffective,
       topicIdOverride:
         args.topicId || process.env.TELEGRAM_TOPIC_ID || undefined,
+      previousVersion: release.previousVersion,
       validateBuildArtifact: (ipaPath) =>
         validateIosReleaseCandidateArtifact({
           ipaPath,
@@ -719,7 +720,7 @@ async function main() {
       return;
     }
 
-    await runPrepareRelease({
+    const release = await runPrepareRelease({
       projectRoot,
       bumpType: 'build',
       changelogFrom: args.changelogFrom,
@@ -740,6 +741,7 @@ async function main() {
       changelogRelativePath: changelogEffective,
       topicIdOverride:
         args.topicId || process.env.TELEGRAM_TOPIC_ID || undefined,
+      previousVersion: release.previousVersion,
     });
     return;
   }

@@ -417,6 +417,10 @@ export async function runPrepareRelease(opts) {
     console.log(`  Version: ${version}`);
     console.log(`  Tag: ${tagName}`);
     console.log(`  Changelog: ${changelogFrom} .. ${changelogTo}`);
+    return {
+      previousVersion: bumpResult?.previousVersion ?? null,
+      newVersion: version,
+    };
   } catch (e) {
     const msg = String(e?.message ?? e);
     if (msg.startsWith('Prepare release failed:')) throw e;

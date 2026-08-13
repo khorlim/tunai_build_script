@@ -80,6 +80,7 @@ export async function performUpload({
   changelogRelativePath,
   topicIdOverride,
   buildFilePath,
+  previousVersion,
 }) {
   console.log(`Starting the upload process for ${platform}...`);
 
@@ -278,6 +279,7 @@ export async function performUpload({
             appName,
             platform,
             version,
+            previousVersion,
             summaryConfig,
           });
           const sent = await sendTelegramMessage({
@@ -351,6 +353,7 @@ export async function performBuild({
   changelogRelativePath,
   topicIdOverride,
   validateBuildArtifact,
+  previousVersion,
 }) {
   let buildSuccess = false;
   let errorMessage;
@@ -418,6 +421,7 @@ export async function performBuild({
       changelogRelativePath,
       topicIdOverride,
       buildFilePath: artifact.path,
+      previousVersion,
     });
 
     console.log('Build and upload process completed successfully!');
