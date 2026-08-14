@@ -1,14 +1,17 @@
+import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildChangelogSummaryPrompt,
   buildClaudeArgs,
+  buildPlainTextClaudeArgs,
   escapeTelegramHtml,
   formatGroupedSummary,
   formatTelegramSummaryBody,
   formatTelegramSummaryMessage,
   GROUPED_SUMMARY_SCHEMA,
   parseClaudeOutput,
+  runClaudeSummary,
   truncateText,
 } from '../node/lib/changelog-summary.mjs';
 import { getTelegramChangelogSummarySection } from '../node/lib/config.mjs';
@@ -77,6 +80,72 @@ test('Claude invocation is isolated, structured, one turn, and uses Haiku', () =
   ]);
   assert.deepEqual(JSON.parse(args[schemaIndex + 1]), GROUPED_SUMMARY_SCHEMA);
   assert.deepEqual(args.slice(schemaIndex + 2), ['--output-format', 'json']);
+});
+
+test('plain-text fallback keeps Claude isolated and one turn', () => {
+  assert.deepEqual(buildPlainTextClaudeArgs('haiku'), [
+    '-p',
+    '--model',
+    'haiku',
+    '--safe-mode',
+    '--tools',
+    '',
+    '--max-turns',
+    '1',
+    '--no-session-persistence',
+    '--permission-mode',
+    'dontAsk',
+  ]);
+});
+
+test('structured max-turn failure retries with a plain-text summary', async () => {
+  const calls = [];
+  const responses = [
+    {
+      code: 1,
+      stdout: JSON.stringify({
+        is_error: true,
+        subtype: 'error_max_turns',
+        stop_reason: 'tool_use',
+      }),
+    },
+    {
+      code: 0,
+      stdout: '🛠 Fixes\n• Keep the tester summary available',
+    },
+  ];
+
+  const spawnImpl = (command, args) => {
+    const response = responses[calls.length];
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = new EventEmitter();
+    child.kill = () => {};
+    calls.push({ command, args, child });
+    child.stdin.end = (input) => {
+      calls[calls.length - 1].input = input;
+      queueMicrotask(() => {
+        if (response.stdout) child.stdout.emit('data', response.stdout);
+        if (response.stderr) child.stderr.emit('data', response.stderr);
+        child.emit('close', response.code, response.signal ?? null);
+      });
+    };
+    return child;
+  };
+
+  const summary = await runClaudeSummary({
+    prompt: 'summarize this changelog',
+    model: 'haiku',
+    spawnImpl,
+  });
+
+  assert.equal(summary, '🛠 Fixes\n• Keep the tester summary available');
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].args, buildClaudeArgs('haiku'));
+  assert.deepEqual(calls[1].args, buildPlainTextClaudeArgs('haiku'));
+  assert.match(calls[1].input, /structured-output mode is unavailable/);
+  assert.match(calls[1].input, /tools, or tool calls/);
 });
 
 test('prompt treats changelog as data and constrains output', () => {

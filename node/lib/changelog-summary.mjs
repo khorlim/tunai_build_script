@@ -104,6 +104,37 @@ export function buildClaudeArgs(model = DEFAULT_MODEL) {
   ];
 }
 
+export function buildPlainTextClaudeArgs(model = DEFAULT_MODEL) {
+  return [
+    '-p',
+    '--model',
+    model,
+    '--safe-mode',
+    '--tools',
+    '',
+    '--max-turns',
+    '1',
+    '--no-session-persistence',
+    '--permission-mode',
+    'dontAsk',
+  ];
+}
+
+function buildPlainTextFallbackPrompt(prompt) {
+  return `${prompt}
+
+The structured-output mode is unavailable for this attempt. Complete the same
+release-summary task as plain text instead.
+
+Final response requirements:
+- Output only the tester-facing summary, with no JSON, metadata, greetings,
+  tables, code fences, tools, or tool calls.
+- Use exactly these headings: 🛠 Fixes, ✨ Features, 🧪 Test focus.
+- Use concise bullet points and keep the total within the character limit in
+  the task above.
+`;
+}
+
 export function buildChangelogSummaryPrompt({
   content,
   appName,
@@ -163,6 +194,27 @@ export function parseClaudeOutput(stdout) {
   }
 
   return formatGroupedSummary(payload?.structured_output);
+}
+
+function parseClaudeFailure(stdout) {
+  try {
+    const payload = JSON.parse(String(stdout));
+    if (!payload?.is_error) return null;
+
+    const details = [payload.subtype, payload.stop_reason, payload.error]
+      .filter((value) => value !== undefined && value !== null && value !== '')
+      .map((value) =>
+        typeof value === 'string' ? value : JSON.stringify(value),
+      );
+    return {
+      detail: details.join(', ') || 'Claude returned an error response',
+      retryable:
+        payload.subtype === 'error_max_turns' ||
+        payload.stop_reason === 'tool_use',
+    };
+  } catch {
+    return null;
+  }
 }
 
 function validateSummaryGroups(value, field) {
@@ -237,70 +289,104 @@ export function runClaudeSummary({
   command = 'claude',
   spawnImpl = spawn,
 }) {
-  return new Promise((resolve, reject) => {
-    const env = { ...process.env };
-    delete env.ANTHROPIC_API_KEY;
-    delete env.ANTHROPIC_AUTH_TOKEN;
+  const runProcess = (args, input = prompt) =>
+    new Promise((resolve, reject) => {
+      const env = { ...process.env };
+      delete env.ANTHROPIC_API_KEY;
+      delete env.ANTHROPIC_AUTH_TOKEN;
 
-    const child = spawnImpl(command, buildClaudeArgs(model), {
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
+      const child = spawnImpl(command, args, {
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
 
-    const finish = (fn, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      fn(value);
-    };
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
 
-    const append = (current, chunk) => {
-      const next = current + String(chunk);
-      if (Buffer.byteLength(next) > MAX_PROCESS_OUTPUT_BYTES) {
+      const append = (current, chunk) => {
+        const next = current + String(chunk);
+        if (Buffer.byteLength(next) > MAX_PROCESS_OUTPUT_BYTES) {
+          child.kill('SIGTERM');
+          finish(reject, new Error('Claude output exceeded the safety limit'));
+          return current;
+        }
+        return next;
+      };
+
+      child.stdout.on('data', (chunk) => {
+        stdout = append(stdout, chunk);
+      });
+      child.stderr.on('data', (chunk) => {
+        stderr = append(stderr, chunk);
+      });
+      child.on('error', (error) => finish(reject, error));
+      child.on('close', (code, signal) => {
+        if (settled) return;
+        if (code !== 0) {
+          const cliFailure = parseClaudeFailure(stdout);
+          const detail = truncateText(
+            stderr ||
+              cliFailure?.detail ||
+              `process ended with ${signal || `exit code ${code}`}`,
+            500,
+          );
+          const error = new Error(`Claude summary failed: ${detail}`);
+          error.retryable = cliFailure?.retryable === true;
+          finish(reject, error);
+          return;
+        }
+        finish(resolve, stdout);
+      });
+
+      const timer = setTimeout(() => {
         child.kill('SIGTERM');
-        finish(reject, new Error('Claude output exceeded the safety limit'));
-        return current;
-      }
-      return next;
-    };
-
-    child.stdout.on('data', (chunk) => {
-      stdout = append(stdout, chunk);
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr = append(stderr, chunk);
-    });
-    child.on('error', (error) => finish(reject, error));
-    child.on('close', (code, signal) => {
-      if (settled) return;
-      if (code !== 0) {
-        const detail = truncateText(
-          stderr || `process ended with ${signal || `exit code ${code}`}`,
-          500,
+        finish(
+          reject,
+          new Error(`Claude summary timed out after ${timeoutSeconds} seconds`),
         );
-        finish(reject, new Error(`Claude summary failed: ${detail}`));
-        return;
-      }
-      try {
-        finish(resolve, parseClaudeOutput(stdout));
-      } catch (error) {
-        finish(reject, error);
-      }
+      }, timeoutSeconds * 1000);
+
+      child.stdin.on('error', (error) => finish(reject, error));
+      child.stdin.end(input);
     });
 
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      finish(
-        reject,
-        new Error(`Claude summary timed out after ${timeoutSeconds} seconds`),
-      );
-    }, timeoutSeconds * 1000);
+  const runStructuredSummary = async () => {
+    const stdout = await runProcess(buildClaudeArgs(model));
+    try {
+      return parseClaudeOutput(stdout);
+    } catch (error) {
+      error.retryable = true;
+      throw error;
+    }
+  };
 
-    child.stdin.on('error', (error) => finish(reject, error));
-    child.stdin.end(prompt);
+  return runStructuredSummary().catch(async (error) => {
+    if (!error.retryable) throw error;
+
+    console.warn(
+      `Claude structured summary failed (${error.message}); retrying with plain-text fallback.`,
+    );
+
+    try {
+      const stdout = await runProcess(
+        buildPlainTextClaudeArgs(model),
+        buildPlainTextFallbackPrompt(prompt),
+      );
+      const text = String(stdout).trim();
+      if (!text) throw new Error('Claude returned an empty plain-text summary');
+      return text;
+    } catch (fallbackError) {
+      throw new Error(
+        `${error.message}; plain-text fallback failed: ${fallbackError.message}`,
+      );
+    }
   });
 }
 
