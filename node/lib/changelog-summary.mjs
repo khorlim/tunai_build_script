@@ -93,7 +93,7 @@ export function buildClaudeArgs(model = DEFAULT_MODEL) {
     '--tools',
     '',
     '--max-turns',
-    '1',
+    '2',
     '--no-session-persistence',
     '--permission-mode',
     'dontAsk',

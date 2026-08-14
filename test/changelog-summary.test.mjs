@@ -61,7 +61,7 @@ test('summary config rejects unsupported providers and failure modes', () => {
   );
 });
 
-test('Claude invocation is isolated, structured, one turn, and uses Haiku', () => {
+test('Claude invocation is isolated, structured, two turns, and uses Haiku', () => {
   const args = buildClaudeArgs('haiku');
   const schemaIndex = args.indexOf('--json-schema');
 
@@ -73,7 +73,7 @@ test('Claude invocation is isolated, structured, one turn, and uses Haiku', () =
     '--tools',
     '',
     '--max-turns',
-    '1',
+    '2',
     '--no-session-persistence',
     '--permission-mode',
     'dontAsk',
