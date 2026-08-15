@@ -963,20 +963,25 @@ async function main() {
     console.log(
       `Generating Telegram changelog summary with Claude (${summaryConfig.model})...`,
     );
-    const text = await generateChangelogSummary({
+    const generated = await generateChangelogSummary({
       changelogFile,
       appName,
       platform,
       version,
       summaryConfig,
     });
-    const sent = await sendTelegramMessage({
-      botToken: telegram.bot_token,
-      chatId: telegram.chat_id,
-      topicId: topicOverride || telegram.topic_id,
-      text,
-    });
-    if (!sent) {
+    const messages = Array.isArray(generated) ? generated : [generated];
+    let allSent = true;
+    for (const text of messages) {
+      const sent = await sendTelegramMessage({
+        botToken: telegram.bot_token,
+        chatId: telegram.chat_id,
+        topicId: topicOverride || telegram.topic_id,
+        text,
+      });
+      if (!sent) allSent = false;
+    }
+    if (!allSent) {
       throw new Error('Telegram rejected the AI changelog summary');
     }
     console.log('AI changelog summary test completed. Check Telegram.');

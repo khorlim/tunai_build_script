@@ -37,7 +37,7 @@ test('cumulative summary and document use the separate Telegram destination', as
     documentTitle: 'Full changelog since production',
     generateSummaryImpl: async (args) => {
       calls.push({ type: 'summary', args });
-      return 'full summary';
+      return ['full summary part 1', 'full summary part 2'];
     },
     sendMessageImpl: async (args) => {
       calls.push({ type: 'message', args });
@@ -61,11 +61,23 @@ test('cumulative summary and document use the separate Telegram destination', as
     {
       chatId: '-1002170888660',
       topicId: '14332',
-      text: 'full summary',
+      text: 'full summary part 1',
     },
   );
-  assert.equal(calls[2].args.chatId, '-1002170888660');
-  assert.equal(calls[2].args.topicId, '14332');
-  assert.equal(calls[2].args.filePath, changelogFile);
-  assert.match(calls[2].args.caption, /Full changelog since production/);
+  assert.deepEqual(
+    {
+      chatId: calls[2].args.chatId,
+      topicId: calls[2].args.topicId,
+      text: calls[2].args.text,
+    },
+    {
+      chatId: '-1002170888660',
+      topicId: '14332',
+      text: 'full summary part 2',
+    },
+  );
+  assert.equal(calls[3].args.chatId, '-1002170888660');
+  assert.equal(calls[3].args.topicId, '14332');
+  assert.equal(calls[3].args.filePath, changelogFile);
+  assert.match(calls[3].args.caption, /Full changelog since production/);
 });

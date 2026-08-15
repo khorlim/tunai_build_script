@@ -52,7 +52,7 @@ export async function deliverTelegramChangelog({
       console.log(
         `Generating Telegram ${label} summary with Claude (${summaryConfig.model})...`,
       );
-      const text = await generateSummaryImpl({
+      const generated = await generateSummaryImpl({
         changelogFile,
         appName,
         platform,
@@ -61,13 +61,18 @@ export async function deliverTelegramChangelog({
         summaryConfig,
         title: summaryTitle,
       });
-      const sent = await sendMessageImpl({
-        botToken: telegram.bot_token,
-        chatId: telegram.chat_id,
-        topicId: telegram.topic_id,
-        text,
-      });
-      if (!sent) {
+      const messages = Array.isArray(generated) ? generated : [generated];
+      let allSent = true;
+      for (const text of messages) {
+        const sent = await sendMessageImpl({
+          botToken: telegram.bot_token,
+          chatId: telegram.chat_id,
+          topicId: telegram.topic_id,
+          text,
+        });
+        if (!sent) allSent = false;
+      }
+      if (!allSent) {
         console.warn(
           `Warning: AI ${label} summary was not delivered; continuing with the ${label} document.`,
         );
