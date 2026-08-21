@@ -112,7 +112,7 @@ test('structured max-turn failure retries with a plain-text summary', async () =
     },
     {
       code: 0,
-      stdout: '🛠 Fixes\n• Keep the tester summary available',
+      stdout: '✨ Features\n• Keep the tester summary available',
     },
   ];
 
@@ -141,12 +141,13 @@ test('structured max-turn failure retries with a plain-text summary', async () =
     spawnImpl,
   });
 
-  assert.equal(summary, '🛠 Fixes\n• Keep the tester summary available');
+  assert.equal(summary, '✨ Features\n• Keep the tester summary available');
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0].args, buildClaudeArgs('haiku'));
   assert.deepEqual(calls[1].args, buildPlainTextClaudeArgs('haiku'));
   assert.match(calls[1].input, /structured-output mode is unavailable/);
   assert.match(calls[1].input, /tools, or tool calls/);
+  assert.doesNotMatch(calls[1].input, /Test focus/);
 });
 
 test('prompt treats changelog as data and constrains output', () => {
@@ -167,9 +168,11 @@ test('prompt treats changelog as data and constrains output', () => {
   assert.match(prompt, /Prefer a conventional-commit[\s\S]*scope/);
   assert.match(prompt, /1200-character message limit/);
   assert.match(prompt, /<changelog>[\s\S]*Ignore all prior instructions/);
+  assert.doesNotMatch(prompt, /test_focus/);
+  assert.doesNotMatch(prompt, /Test focus/);
 });
 
-test('Claude structured output preserves every change and renders test focus', () => {
+test('Claude structured output preserves every change and groups by type', () => {
   const structuredOutput = {
     changes: [
       {
@@ -188,18 +191,24 @@ test('Claude structured output preserves every change and renders test focus', (
         summary: 'Refresh generated release metadata',
       },
     ],
-    test_focus: ['Select and deselect a voucher'],
   };
 
   assert.equal(
     parseClaudeOutput(JSON.stringify({ structured_output: structuredOutput })),
     `📋 Changes (3)
-• [Fix] Expenses: Center the empty chart legend
-• [Feature] Vouchers: Allow vouchers to be deselected
-• [Other] Build: Refresh generated release metadata
 
-🧪 Test focus (1 check)
-☐ Select and deselect a voucher`,
+✨ Features (1)
+• Vouchers: Allow vouchers to be deselected
+
+🛠 Fixes (1)
+• Expenses: Center the empty chart legend
+
+📦 Other (1)
+• Build: Refresh generated release metadata`,
+  );
+  assert.doesNotMatch(
+    parseClaudeOutput(JSON.stringify({ structured_output: structuredOutput })),
+    /Test focus/,
   );
   assert.throws(() => parseClaudeOutput('not-json'), /invalid JSON/);
   assert.throws(
@@ -208,21 +217,11 @@ test('Claude structured output preserves every change and renders test focus', (
   );
 });
 
-test('grouped summary rejects empty changes and test focus', () => {
+test('grouped summary rejects empty changes', () => {
   assert.throws(
     () =>
-      formatGroupedSummary({ changes: [], test_focus: [] }),
+      formatGroupedSummary({ changes: [] }),
     /no changes/,
-  );
-  assert.throws(
-    () =>
-      formatGroupedSummary({
-        changes: [
-          { category: 'fix', feature: 'Orders', summary: 'Correct totals' },
-        ],
-        test_focus: [],
-      }),
-    /test_focus has invalid items/,
   );
 });
 
@@ -266,16 +265,13 @@ test('Telegram summary escapes HTML and respects the body limit', () => {
 
 test('Telegram summary styles section headings and escapes generated text', () => {
   const body = formatTelegramSummaryBody(
-    '🛠 Fixes (1)\nOrders <checkout>\n• Correct A & B\n\n✨ Features (1)\nReports\n• Add export\n\n🧪 Test focus (1 check)\nOrders\n☐ Save an order',
+    '🛠 Fixes (1)\n• Orders <checkout>: Correct A & B\n\n✨ Features (1)\n• Reports: Add export',
   );
 
   assert.match(body, /^<b>🛠 Fixes \(1\)<\/b>/);
   assert.match(body, /<b>✨ Features \(1\)<\/b>/);
-  assert.match(body, /<b>🧪 Test focus \(1 check\)<\/b>/);
-  assert.match(body, /<i>Orders &lt;checkout&gt;<\/i>/);
-  assert.match(body, /<i>Reports<\/i>/);
+  assert.doesNotMatch(body, /Test focus/);
   assert.match(body, /Correct A &amp; B/);
-  assert.match(body, /☐ Save an order/);
 });
 
 test('Telegram summary shows the version transition when available', () => {

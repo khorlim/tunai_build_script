@@ -38,14 +38,8 @@ export const GROUPED_SUMMARY_SCHEMA = {
       minItems: 1,
       items: CHANGE_SCHEMA,
     },
-    test_focus: {
-      type: 'array',
-      minItems: 1,
-      maxItems: 12,
-      items: { type: 'string', minLength: 1, maxLength: 240 },
-    },
   },
-  required: ['changes', 'test_focus'],
+  required: ['changes'],
   additionalProperties: false,
 };
 
@@ -61,10 +55,9 @@ export function formatTelegramSummaryBody(value) {
     'What changed',
     'Fixes',
     'Features',
-    'Test focus',
   ]);
   const sectionHeading =
-    /^(?:📋 Changes \(\d+\)|🛠 Fixes \(\d+\)|✨ Features \(\d+\)|🧪 Test focus \(\d+ checks?\))$/u;
+    /^(?:📋 Changes|✨ Features|🛠 Fixes|⚡ Improvements|📚 Docs|🧪 Tests|🔧 Maintenance|🏗️ Build|⚙️ CI|📦 Other) \(\d+\)$/u;
   return String(value)
     .split('\n')
     .map((line) => {
@@ -133,7 +126,8 @@ release-summary task as plain text instead.
 Final response requirements:
 - Output only the tester-facing summary, with no JSON, metadata, greetings,
   tables, code fences, tools, or tool calls.
-- Use exactly these headings: 📋 Changes and 🧪 Test focus.
+- Use 📋 Changes followed by icon-led category headings such as ✨ Features,
+  🛠 Fixes, and ⚡ Improvements.
 - Exclude only maintenance, documentation, test, build, and CI sections. Include
   one concise bullet for every other PR/change section and cover all changes
   within that section. Do not omit or merge eligible sections to fit one
@@ -200,7 +194,6 @@ Create concise structured data for a plain-text Telegram summary for:
 
 Return structured data with these arrays:
 - changes: one item for every eligible PR or change section in the changelog
-- test_focus: concrete checks testers should perform
 
 Each changes item contains:
 - category: one of fix, feature, improvement, maintenance, docs, test, build,
@@ -221,7 +214,6 @@ Rules:
 - Prefer a conventional-commit scope for the feature label when available,
   converted to friendly title case. Infer a narrow product area otherwise.
 - A leading commit type wins even if later words contain another type.
-- Derive test_focus only from the changelog, with up to 12 concrete checks.
 - Do not include greetings, metadata, HTML, Markdown, tables, or code fences.
 - Keep each change summary concise. The caller delivers all changes across
   multiple Telegram messages, so the ${maxChars}-character message limit never
@@ -286,27 +278,17 @@ function validateChanges(value) {
   }
 }
 
-function validateTestFocus(value) {
-  if (
-    !Array.isArray(value) ||
-    value.length === 0 ||
-    value.some((item) => typeof item !== 'string' || !item.trim())
-  ) {
-    throw new Error('Claude summary field test_focus has invalid items');
-  }
-}
-
-const CATEGORY_LABELS = {
-  fix: 'Fix',
-  feature: 'Feature',
-  improvement: 'Improvement',
-  maintenance: 'Maintenance',
-  docs: 'Docs',
-  test: 'Test',
-  build: 'Build',
-  ci: 'CI',
-  other: 'Other',
-};
+const CATEGORY_GROUPS = [
+  { category: 'feature', icon: '✨', label: 'Features' },
+  { category: 'fix', icon: '🛠', label: 'Fixes' },
+  { category: 'improvement', icon: '⚡', label: 'Improvements' },
+  { category: 'other', icon: '📦', label: 'Other' },
+  { category: 'docs', icon: '📚', label: 'Docs' },
+  { category: 'test', icon: '🧪', label: 'Tests' },
+  { category: 'maintenance', icon: '🔧', label: 'Maintenance' },
+  { category: 'build', icon: '🏗️', label: 'Build' },
+  { category: 'ci', icon: '⚙️', label: 'CI' },
+];
 
 export function formatGroupedSummary(structuredOutput) {
   if (!structuredOutput || typeof structuredOutput !== 'object') {
@@ -314,20 +296,18 @@ export function formatGroupedSummary(structuredOutput) {
   }
 
   validateChanges(structuredOutput.changes);
-  validateTestFocus(structuredOutput.test_focus);
 
   const lines = [`📋 Changes (${structuredOutput.changes.length})`];
-  for (const change of structuredOutput.changes) {
-    lines.push(
-      `• [${CATEGORY_LABELS[change.category]}] ${change.feature.trim()}: ${change.summary.trim()}`,
+  for (const group of CATEGORY_GROUPS) {
+    const changes = structuredOutput.changes.filter(
+      (change) => change.category === group.category,
     );
-  }
-  lines.push(
-    '',
-    `🧪 Test focus (${structuredOutput.test_focus.length} ${structuredOutput.test_focus.length === 1 ? 'check' : 'checks'})`,
-  );
-  for (const item of structuredOutput.test_focus) {
-    lines.push(`☐ ${item.trim()}`);
+    if (changes.length === 0) continue;
+
+    lines.push('', `${group.icon} ${group.label} (${changes.length})`);
+    for (const change of changes) {
+      lines.push(`• ${change.feature.trim()}: ${change.summary.trim()}`);
+    }
   }
   return lines.join('\n');
 }
