@@ -623,6 +623,7 @@ async function main() {
     console.log('Channel: production');
     console.log(`iOS bundle id: ${candidate.iosBundleId}`);
     console.log(`iOS export options: ${candidate.exportOptionsPath}`);
+    console.log(`iOS archive signing: manual, ${candidate.archiveSigning.certificate}, ${candidate.archiveSigning.profile}`);
     console.log('Distribution: Buildport');
     console.log(
       `Buildport app group: ${candidate.buildportAppGroup ?? '(pubspec name)'}`,
@@ -684,6 +685,7 @@ async function main() {
     await performBuild({
       projectRoot,
       config: candidate.config,
+      iosArchiveSigning: candidate.archiveSigning,
       platform: args.releaseCandidatePlatform,
       update: false,
       changelogRelativePath: changelogEffective,

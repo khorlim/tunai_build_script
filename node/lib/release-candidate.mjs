@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
+import { archiveSigningFromExportOptions } from './ios-archive-signing.mjs';
 import {
   getBuildportSection,
   getTelegramChangelogSummarySection,
@@ -307,6 +308,12 @@ export function prepareReleaseCandidate({
     );
   }
 
+  const archiveSigning = archiveSigningFromExportOptions(
+    exportOptions,
+    iosBundleId,
+    channel.ios_target ?? 'Runner',
+  );
+
   const buildport = getBuildportSection(config);
   if (!buildport) {
     throw new Error(
@@ -387,6 +394,7 @@ export function prepareReleaseCandidate({
     iosBundleId,
     iosDisplayName,
     exportOptionsPath,
+    archiveSigning,
     envPath,
     channelFile,
     tagPrefix,
