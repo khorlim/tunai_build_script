@@ -249,7 +249,8 @@ function parseClaudeFailure(stdout) {
       detail: details.join(', ') || 'Claude returned an error response',
       retryable:
         payload.subtype === 'error_max_turns' ||
-        payload.stop_reason === 'tool_use',
+        payload.stop_reason === 'tool_use' ||
+        payload.stop_reason === 'stop_sequence',
     };
   } catch {
     return null;

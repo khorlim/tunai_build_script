@@ -99,15 +99,15 @@ test('plain-text fallback keeps Claude isolated and one turn', () => {
   ]);
 });
 
-test('structured max-turn failure retries with a plain-text summary', async () => {
+test('structured stop-sequence failure retries with a plain-text summary', async () => {
   const calls = [];
   const responses = [
     {
       code: 1,
       stdout: JSON.stringify({
         is_error: true,
-        subtype: 'error_max_turns',
-        stop_reason: 'tool_use',
+        subtype: 'success',
+        stop_reason: 'stop_sequence',
       }),
     },
     {
