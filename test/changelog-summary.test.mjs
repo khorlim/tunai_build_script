@@ -172,6 +172,27 @@ test('prompt treats changelog as data and constrains output', () => {
   assert.doesNotMatch(prompt, /Test focus/);
 });
 
+test('prompt includes style PRs as user-visible improvements', () => {
+  const prompt = buildChangelogSummaryPrompt({
+    content: [
+      '#### PR #1 — style/appointment-week-strip',
+      '',
+      'Visible calendar layout update.',
+      '',
+      '#### PR #2 — chore/reformat-generated-files',
+      '',
+      'No user-visible change.',
+    ].join('\n'),
+    appName: 'tunaipro',
+    platform: 'ios',
+    version: '1.2.3+4',
+  });
+
+  assert.match(prompt, /source contains 1 eligible change sections/);
+  assert.match(prompt, /style as an improvement/);
+  assert.match(prompt, /chore\s+and refactor as maintenance/);
+});
+
 test('Claude structured output preserves every change and groups by type', () => {
   const structuredOutput = {
     changes: [
