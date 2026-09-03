@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getAppInfo } from './app-info.mjs';
 import { runInherit } from './run.mjs';
+import { withIosArchiveSigning } from './ios-archive-signing.mjs';
 import { getVersion } from './pubspec.mjs';
 import {
   getApphostSection,
@@ -414,6 +415,7 @@ export async function performBuild({
   changelogRelativePath,
   topicIdOverride,
   validateBuildArtifact,
+  iosArchiveSigning,
   previousVersion,
   additionalChangelogDeliveries,
 }) {
@@ -444,7 +446,7 @@ export async function performBuild({
       const rel =
         (config.ios && config.ios.export_options_plist) ||
         'ios/ExportOptions.plist';
-      const exportOptions = path.join(projectRoot, rel);
+      const exportOptions = resolvePath(projectRoot, rel);
       const args = ['build', 'ipa'];
       if (fs.existsSync(exportOptions)) {
         args.push('--export-options-plist', exportOptions);
@@ -454,7 +456,12 @@ export async function performBuild({
           `Warning: ${rel} not found, building IPA without export options`,
         );
       }
-      buildExit = await runInherit(projectRoot, 'flutter', args);
+      if (iosArchiveSigning) {
+        console.log(`Archive signing: manual, ${iosArchiveSigning.certificate}, ${iosArchiveSigning.profile}`);
+      }
+      buildExit = await withIosArchiveSigning(iosArchiveSigning, (env) =>
+        runInherit(projectRoot, 'flutter', args, { env }),
+      );
     } else {
       console.log('Building Android APK for Play Store');
       buildExit = await runInherit(projectRoot, 'flutter', ['build', 'apk']);

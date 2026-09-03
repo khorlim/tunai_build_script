@@ -156,7 +156,8 @@ function classifySectionHeading(line) {
   if (['test', 'tests'].includes(token)) return 'test';
   if (['build', 'release'].includes(token)) return 'build';
   if (token === 'ci') return 'ci';
-  if (['chore', 'refactor', 'style'].includes(token)) return 'maintenance';
+  if (['chore', 'refactor'].includes(token)) return 'maintenance';
+  if (token === 'style') return 'improvement';
   return 'other';
 }
 
@@ -205,8 +206,9 @@ Rules:
 - The source contains ${expectedChangeCount} eligible change sections;
   emit exactly that many changes items when the count is non-zero.
 - Preserve source order. Never omit, merge, deduplicate, or filter a change.
-- Exclude only maintenance, docs, test, build, and CI sections. Treat chore,
-  refactor, and style as maintenance, and release metadata as build.
+- Exclude only maintenance, docs, test, build, and CI sections. Treat chore
+  and refactor as maintenance, style as an improvement, and release metadata
+  as build.
 - Include every other section, including fixes, features, improvements, reverts,
   and sections whose type is other.
 - Use one compact summary per source section and cover every bullet within that

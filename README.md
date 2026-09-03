@@ -137,7 +137,18 @@ Required configuration:
 }
 ```
 
-Before upload, the CLI opens the generated IPA and requires both:
+The export plist must specify `signingStyle: manual`, a `teamID`, a distribution
+`signingCertificate`, and one provisioning-profile mapping for the app bundle ID.
+RC builds apply those same settings to the **archive**, not only IPA export, using
+a temporary `XCODE_XCCONFIG_FILE` passed to the Flutter child process. The app
+profile is scoped to the `Runner` target (`channel.prod.ios_target` can override
+that name), so Pods do not inherit it. Project signing settings remain untouched.
+The certificate/private key and profile must already be installed (for example,
+with Fastlane Match readonly); this does not create certificates or log in to Xcode.
+An existing `XCODE_XCCONFIG_FILE` is rejected instead of silently overridden.
+Other build modes retain their existing signing behavior.
+
+Before upload, the CLI opens the generated IPA and requires:
 
 - `CFBundleIdentifier` exactly matches `channel.prod.ios_bundle_id`.
 - `CFBundleDisplayName` exactly matches `channel.prod.ios_display_name`.

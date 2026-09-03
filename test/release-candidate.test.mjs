@@ -48,6 +48,9 @@ function makeTempProject() {
 <dict>
   <key>method</key>
   <string>ad-hoc</string>
+  <key>signingStyle</key><string>manual</string>
+  <key>teamID</key><string>ABCDEFGHIJ</string>
+  <key>signingCertificate</key><string>Apple Distribution</string>
   <key>provisioningProfiles</key>
   <dict>
     <key>com.example.app</key>
@@ -121,6 +124,12 @@ test('release candidate writes production channel and forces Buildport', (t) => 
   });
 
   assert.equal(result.iosBundleId, 'com.example.app');
+  assert.deepEqual(result.archiveSigning, {
+    target: 'Runner',
+    teamId: 'ABCDEFGHIJ',
+    certificate: 'Apple Distribution',
+    profile: 'match AdHoc com.example.app',
+  });
   assert.equal(result.tagPrefix, 'example-rc');
   assert.equal(result.buildportAppGroup, 'Example');
   assert.equal(result.config.upload.provider, 'buildport');
