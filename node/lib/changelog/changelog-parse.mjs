@@ -114,6 +114,15 @@ function forEachLineRespectingFences(text, onLine) {
  */
 export function demoteMarkdownHeadings(body, minHeadingLevel = 5) {
   if (!body?.trim()) return body;
+  // `#### PR #… — …` is reserved for generator-owned section boundaries.
+  // Demote lookalikes everywhere, including code fences, before embedding a
+  // PR description so summary parsing can recover after malformed fences.
+  body = body
+    .split('\n')
+    .map((line) =>
+      /^#### PR\s+#\d+\s+—\s*/u.test(line) ? `#${line}` : line,
+    )
+    .join('\n');
   let shallowest = 7;
   forEachLineRespectingFences(body, (line, inFence) => {
     if (inFence) return;
