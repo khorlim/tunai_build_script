@@ -312,6 +312,7 @@ export function prepareReleaseCandidate({
     exportOptions,
     iosBundleId,
     channel.ios_target ?? 'Runner',
+    channel.ios_extension_targets ?? {},
   );
 
   const buildport = getBuildportSection(config);

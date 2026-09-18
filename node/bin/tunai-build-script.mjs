@@ -604,10 +604,11 @@ async function main() {
       const fromRev = await getLastTagMatchingPrefix(
         projectRoot,
         candidate.cumulativeChangelog.fromTagPrefix,
+        { reachableOnly: false },
       );
       if (!fromRev) {
         throw new Error(
-          `No reachable production tag matches ${candidate.cumulativeChangelog.fromTagPrefix}-v*`,
+          `No production tag matches ${candidate.cumulativeChangelog.fromTagPrefix}-v*`,
         );
       }
       cumulativeChangelog = {
@@ -665,6 +666,7 @@ async function main() {
     const release = await runPrepareRelease({
       projectRoot,
       bumpType: 'build',
+      commitTrailer: releaseConfig.commit_trailer ?? null,
       changelogFrom: args.changelogFrom,
       changelogTo: args.changelogTo,
       tagPrefix,
@@ -787,6 +789,7 @@ async function main() {
     const release = await runPrepareRelease({
       projectRoot,
       bumpType: 'build',
+      commitTrailer: releaseConfig.commit_trailer ?? null,
       changelogFrom: args.changelogFrom,
       changelogTo: args.changelogTo,
       tagPrefix: tagPrefix ?? '',

@@ -337,12 +337,15 @@ async function writeSupplementalTesterChangelog({
  * @param {string[]} relativePaths
  * @param {string} message
  */
-async function gitCommit(projectRoot, relativePaths, message) {
+async function gitCommit(projectRoot, relativePaths, message, commitTrailer = null) {
+  if (commitTrailer !== null && !/^Co-Authored-By: [^\r\n<>]+ <[^\r\n<>]+>$/.test(commitTrailer)) {
+    throw new Error('commitTrailer must be a single Co-Authored-By trailer');
+  }
   const add = await runGit(projectRoot, ['add', '--', ...relativePaths]);
   if (add.code !== 0) {
     throw new Error(add.stderr.trim() || 'git add failed');
   }
-  const commit = await runGit(projectRoot, ['commit', '-m', message]);
+  const commit = await runGit(projectRoot, ['commit', '-m', message, ...(commitTrailer ? ['-m', commitTrailer] : [])]);
   if (commit.code !== 0) {
     throw new Error(commit.stderr.trim() || 'git commit failed');
   }
@@ -456,7 +459,7 @@ export async function runPrepareRelease(opts) {
     const commitMessage = `chore(release): v${version}`;
 
     console.log('\n[3/6] Committing…');
-    await gitCommit(projectRoot, releasePaths, commitMessage);
+    await gitCommit(projectRoot, releasePaths, commitMessage, opts.commitTrailer ?? null);
     gitState.committed = true;
 
     console.log('\n[4/6] Pushing commit…');
