@@ -158,9 +158,24 @@ export async function getLastTag(projectRoot) {
  * @param {string} projectRoot
  * @param {string} prefix
  */
-export async function getLastTagMatchingPrefix(projectRoot, prefix) {
+export async function getLastTagMatchingPrefix(projectRoot, prefix, { reachableOnly = true } = {}) {
   const trimmed = prefix?.trim() ?? '';
   if (!trimmed) return getLastTag(projectRoot);
+
+  if (!reachableOnly) {
+    const result = await runGit(projectRoot, ['tag', '--list', `${trimmed}-v*`]);
+    if (result.code !== 0) return null;
+    const tags = result.stdout.trim().split(/\r?\n/).map(tag => {
+      const suffix = tag.slice(`${trimmed}-v`.length);
+      const match = suffix.match(/^(\d+)\.(\d+)\.(\d+)\+(\d+)$/);
+      return match ? { tag, version: match.slice(1).map(Number) } : null;
+    }).filter(Boolean);
+    tags.sort((a, b) => {
+      for (let i = 0; i < 4; i++) if (a.version[i] !== b.version[i]) return b.version[i] - a.version[i];
+      return 0;
+    });
+    return tags[0]?.tag ?? null;
+  }
 
   const r = await runGit(projectRoot, [
     'describe',

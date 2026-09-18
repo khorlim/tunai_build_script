@@ -286,6 +286,7 @@ test('prepare release commits the cumulative tester changelog', async (t) => {
     changelogFrom: 'example-rc-v1.0.0+1',
     changelogTo: 'HEAD',
     tagPrefix: 'example-rc',
+    commitTrailer: 'Co-Authored-By: Codex <noreply@openai.com>',
     supplementalTesterChangelog: {
       fromRev: 'example-prod-v1.0.0+1',
       outputPath: 'changelog_tester_since_prod.md',
@@ -293,6 +294,7 @@ test('prepare release commits the cumulative tester changelog', async (t) => {
   });
 
   assert.equal(result.newVersion, '1.0.0+2');
+  assert.match(runGit(projectRoot, ['log', '-1', '--format=%B']), /Co-Authored-By: Codex <noreply@openai.com>/);
   assert.equal(
     result.supplementalTesterChangelog.fromRev,
     'example-prod-v1.0.0+1',

@@ -70,3 +70,19 @@ test('signing preflight rejects automatic, development, incomplete and unsafe co
     assert.throws(() => archiveSigningFromExportOptions({ ...options, ...override }, 'com.example.app'));
   }
 });
+
+test('extension profiles are selected per target and unsafe or unmapped targets fail before build', async () => {
+  const options = {signingStyle:'manual',teamID:signing.teamId,signingCertificate:signing.certificate,
+    provisioningProfiles:{'com.example.app':signing.profile,'com.example.app.widget':'match AdHoc com.example.app.widget'}};
+  const selected = archiveSigningFromExportOptions(options,'com.example.app','Runner',{'com.example.app.widget':'WidgetExtension'});
+  await withIosArchiveSigning(selected, async env => {
+    const contents=fs.readFileSync(env.XCODE_XCCONFIG_FILE,'utf8');
+    assert.match(contents,/TUNAI_ARCHIVE_PROFILE_WidgetExtension = match AdHoc com.example.app.widget/);
+    assert.match(contents,/PROVISIONING_PROFILE_SPECIFIER = \$\(TUNAI_ARCHIVE_PROFILE_\$\(TARGET_NAME\)\)/);
+  },{});
+  for(const target of ['Runner','Widget\nCODE_SIGNING_ALLOWED = NO','$(OTHER)']) {
+    assert.throws(()=>archiveSigningFromExportOptions(options,'com.example.app','Runner',{'com.example.app.widget':target}));
+  }
+  assert.throws(()=>archiveSigningFromExportOptions(options,'com.example.app'));
+  assert.throws(()=>archiveSigningFromExportOptions({...options,provisioningProfiles:{'com.example.app':signing.profile}},'com.example.app','Runner',{'com.example.app.widget':'WidgetExtension'}));
+});
