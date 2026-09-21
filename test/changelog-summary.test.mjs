@@ -25,6 +25,46 @@ import {
 import { demoteMarkdownHeadings } from '../node/lib/changelog/changelog-parse.mjs';
 import { getTelegramChangelogSummarySection } from '../node/lib/config.mjs';
 
+const SUMMARY_CONFIG = {
+  max_chars: 3000,
+  model: 'haiku',
+  timeout_seconds: 60,
+};
+
+function makeEligibleSectionWithAnnotatedLength({
+  targetChars,
+  sourceIndex,
+  category = 'fix',
+}) {
+  const heading = `#### PR #${sourceIndex} — ${category}: source change ${sourceIndex}`;
+  const sourceCategory = category === 'feat' ? 'feature' : category;
+  const annotation =
+    `[source_id: ${'0'.repeat(12)}; source_index: ${sourceIndex}; ` +
+    `source_category: ${sourceCategory}]`;
+  const fixedChars = Array.from(`${heading}\n${annotation}\n`).length;
+  assert.ok(targetChars >= fixedChars);
+  return `${heading}\n${'x'.repeat(targetChars - fixedChars)}`;
+}
+
+function extractPromptChangelog(prompt) {
+  const match = String(prompt).match(/<changelog>\n([\s\S]*)\n<\/changelog>$/u);
+  assert.ok(match, 'prompt must contain a changelog payload');
+  return match[1];
+}
+
+function createValidBatchOutput(args) {
+  return {
+    changes: args.expectedSourceIndexes.map((sourceIndex, index) => ({
+      source_index: sourceIndex,
+      source_id: args.expectedSourceIds[index],
+      category: args.expectedSourceCategories[index],
+      module: 'Platform',
+      feature: `Change ${sourceIndex}`,
+      summary: `Covers source section ${sourceIndex}`,
+    })),
+  };
+}
+
 test('summary config is opt-in and applies safe defaults', () => {
   assert.equal(getTelegramChangelogSummarySection({}), null);
   assert.equal(
@@ -363,6 +403,204 @@ test('docs-only changelogs skip summary generation cleanly', async (t) => {
   assert.equal(claudeCalled, false);
 });
 
+test('14 internal source batches become one globally grouped Telegram summary', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-batches-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const changelogFile = path.join(directory, 'changelog.md');
+  const sections = Array.from({ length: 14 }, (_, offset) => {
+    const sourceIndex = offset + 1;
+    const category = sourceIndex % 2 === 1 ? 'feat' : 'fix';
+    return makeEligibleSectionWithAnnotatedLength({
+      targetChars: 6000,
+      sourceIndex,
+      category,
+    });
+  });
+  fs.writeFileSync(changelogFile, sections.join('\n'), 'utf8');
+
+  const calls = [];
+  const messages = await generateChangelogSummary({
+    changelogFile,
+    appName: 'TunaiPro',
+    platform: 'ios',
+    previousVersion: '1.0.0+1',
+    version: '1.1.0+2',
+    title: 'Full Release Summary',
+    summaryConfig: { max_chars: 500, model: 'haiku', timeout_seconds: 60 },
+    runClaude: async (args) => {
+      calls.push(args);
+      return {
+        changes: args.expectedSourceIndexes.map((sourceIndex, index) => ({
+          source_index: sourceIndex,
+          source_id: args.expectedSourceIds[index],
+          category: args.expectedSourceCategories[index],
+          module: sourceIndex % 4 < 2 ? 'Orders' : 'Reports',
+          feature: `Change ${sourceIndex}`,
+          summary: `Covers source section ${sourceIndex}`,
+        })),
+      };
+    },
+  });
+
+  assert.equal(calls.length, 14);
+  assert.ok(
+    calls.every(
+      (call) => Array.from(extractPromptChangelog(call.prompt)).length <= 8000,
+    ),
+  );
+  assert.ok(messages.length > 1);
+  assert.notEqual(messages.length, 14);
+  assert.ok(
+    messages.every(
+      (message, index) =>
+        message.includes(
+          `<b>Full Release Summary (part ${index + 1}/${messages.length})</b>`,
+        ) && Array.from(message).length <= 4096,
+    ),
+  );
+  const combined = messages.join('\n');
+  assert.doesNotMatch(combined, /source \d+\/\d+/i);
+  for (let sourceIndex = 1; sourceIndex <= 14; sourceIndex += 1) {
+    assert.equal(
+      combined.match(new RegExp(`Change ${sourceIndex}:`, 'g'))?.length,
+      1,
+    );
+  }
+  const orderedFeatures = [1, 5, 9, 13, 3, 7, 11];
+  const orderedFixes = [2, 6, 10, 14, 4, 8, 12];
+  assert.deepEqual(
+    [...combined.matchAll(/Change (\d+):/g)].map((match) => Number(match[1])),
+    [...orderedFeatures, ...orderedFixes],
+  );
+  assert.ok(calls.every((call) => call.returnStructured === true));
+});
+
+test('annotated source sections allow exactly 8000 characters and reject 8001 before Claude', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-section-limit-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const changelogFile = path.join(directory, 'changelog.md');
+
+  fs.writeFileSync(
+    changelogFile,
+    makeEligibleSectionWithAnnotatedLength({
+      targetChars: 8000,
+      sourceIndex: 1,
+    }),
+    'utf8',
+  );
+  const acceptedCalls = [];
+  await generateChangelogSummary({
+    changelogFile,
+    appName: 'TunaiPro',
+    platform: 'ios',
+    version: '1.0.0+1',
+    summaryConfig: SUMMARY_CONFIG,
+    runClaude: async (args) => {
+      acceptedCalls.push(args);
+      return createValidBatchOutput(args);
+    },
+  });
+  assert.equal(acceptedCalls.length, 1);
+  assert.equal(
+    Array.from(extractPromptChangelog(acceptedCalls[0].prompt)).length,
+    8000,
+  );
+
+  fs.writeFileSync(
+    changelogFile,
+    makeEligibleSectionWithAnnotatedLength({
+      targetChars: 8001,
+      sourceIndex: 1,
+    }),
+    'utf8',
+  );
+  let rejectedClaudeCalls = 0;
+  await assert.rejects(
+    generateChangelogSummary({
+      changelogFile,
+      appName: 'TunaiPro',
+      platform: 'ios',
+      version: '1.0.0+1',
+      summaryConfig: SUMMARY_CONFIG,
+      runClaude: async () => {
+        rejectedClaudeCalls += 1;
+        return { changes: [] };
+      },
+    }),
+    /Annotated source section 1 exceeds the 8000-character batch limit \(8001 characters\)/,
+  );
+  assert.equal(rejectedClaudeCalls, 0);
+});
+
+test('source batching counts the newline separator exactly', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-separators-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const changelogFile = path.join(directory, 'changelog.md');
+
+  const runWithSectionLengths = async (sectionLengths) => {
+    fs.writeFileSync(
+      changelogFile,
+      sectionLengths
+        .map((targetChars, offset) =>
+          makeEligibleSectionWithAnnotatedLength({
+            targetChars,
+            sourceIndex: offset + 1,
+          }),
+        )
+        .join('\n'),
+      'utf8',
+    );
+    const calls = [];
+    await generateChangelogSummary({
+      changelogFile,
+      appName: 'TunaiPro',
+      platform: 'ios',
+      version: '1.0.0+1',
+      summaryConfig: SUMMARY_CONFIG,
+      runClaude: async (args) => {
+        calls.push(args);
+        return createValidBatchOutput(args);
+      },
+    });
+    return calls;
+  };
+
+  const exactlyAtLimit = await runWithSectionLengths([3999, 4000]);
+  assert.equal(exactlyAtLimit.length, 1);
+  assert.equal(
+    Array.from(extractPromptChangelog(exactlyAtLimit[0].prompt)).length,
+    8000,
+  );
+
+  const oneOverLimit = await runWithSectionLengths([4000, 4000]);
+  assert.equal(oneOverLimit.length, 2);
+  assert.deepEqual(
+    oneOverLimit.map((call) => Array.from(extractPromptChangelog(call.prompt)).length),
+    [4000, 4000],
+  );
+});
+
+test('changelog input allows exactly 180000 characters and rejects 180001', () => {
+  assert.doesNotThrow(() =>
+    buildChangelogSummaryPrompt({
+      content: 'x'.repeat(180000),
+      appName: 'TunaiPro',
+      platform: 'ios',
+      version: '1.0.0+1',
+    }),
+  );
+  assert.throws(
+    () =>
+      buildChangelogSummaryPrompt({
+        content: 'x'.repeat(180001),
+        appName: 'TunaiPro',
+        platform: 'ios',
+        version: '1.0.0+1',
+      }),
+    /180001 > 180000 characters/,
+  );
+});
+
 test('source scanning does not treat tab or NBSP indentation as a fence', () => {
   for (const indentation of ['\t', '\u00a0']) {
     const content = [
@@ -647,6 +885,48 @@ test('structured and fallback output reject excluded-category substitution', () 
     () => parsePlainTextFallbackOutput(JSON.stringify({ changes }), 1),
     /invalid item/,
   );
+});
+
+test('structured and fallback validation preserve non-contiguous global source indexes', () => {
+  const changes = [
+    {
+      source_index: 2,
+      source_id: '222222222222',
+      category: 'fix',
+      module: 'Orders',
+      feature: 'Second',
+      summary: 'Second global source section',
+    },
+    {
+      source_index: 5,
+      source_id: '555555555555',
+      category: 'feature',
+      module: 'Reports',
+      feature: 'Fifth',
+      summary: 'Fifth global source section',
+    },
+  ];
+  const expectedSourceIds = ['222222222222', '555555555555'];
+  const expectedSourceCategories = ['fix', 'feature'];
+  const expectedSourceIndexes = [2, 5];
+  const structured = parseClaudeOutput(
+    JSON.stringify({ structured_output: { changes } }),
+    2,
+    expectedSourceIds,
+    expectedSourceCategories,
+    expectedSourceIndexes,
+  );
+  const fallback = parsePlainTextFallbackOutput(
+    JSON.stringify({ changes }),
+    2,
+    expectedSourceIds,
+    expectedSourceCategories,
+    expectedSourceIndexes,
+  );
+
+  assert.equal(structured, fallback);
+  assert.match(structured, /Second global source section/);
+  assert.match(structured, /Fifth global source section/);
 });
 
 test('structured and fallback output reject reordered source sections', () => {
