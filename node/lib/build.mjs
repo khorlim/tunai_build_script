@@ -36,6 +36,8 @@ export async function deliverTelegramChangelog({
   label = 'changelog',
   summaryTitle = 'Release Summary',
   documentTitle = 'Changelog',
+  receiptPath,
+  receiptPrefix = 'incremental',
   generateSummaryImpl = generateChangelogSummary,
   sendMessageImpl = sendTelegramMessage,
   sendDocumentImpl = sendTelegramDocument,
@@ -64,21 +66,36 @@ export async function deliverTelegramChangelog({
       });
       const messages = Array.isArray(generated) ? generated : [generated];
       let allSent = true;
-      for (const text of messages) {
+      for (const [index, text] of messages.entries()) {
         const sent = await sendMessageImpl({
           botToken: telegram.bot_token,
           chatId: telegram.chat_id,
           topicId: telegram.topic_id,
           text,
+          receiptPath,
+          receipt: {
+            delivery: `${receiptPrefix}_summary`,
+            part: index + 1,
+            total_parts: messages.length,
+            version,
+          },
         });
         if (!sent) allSent = false;
       }
       if (!allSent) {
+        if (receiptPath) {
+          throw new Error(`Telegram rejected the AI ${label} summary`);
+        }
         console.warn(
           `Warning: AI ${label} summary was not delivered; continuing with the ${label} document.`,
         );
       }
     } catch (error) {
+      if (receiptPath) {
+        throw new Error(
+          `AI ${label} summary delivery failed: ${error?.message ?? error}`,
+        );
+      }
       console.warn(
         `Warning: AI ${label} summary failed; continuing with the ${label} document. ${error?.message ?? error}`,
       );
@@ -88,7 +105,7 @@ export async function deliverTelegramChangelog({
   const uploadLabel =
     label === 'changelog' ? 'changelog' : `${label}`;
   console.log(`Uploading ${uploadLabel} file: ${changelogFile}`);
-  return sendDocumentImpl({
+  const document = await sendDocumentImpl({
     botToken: telegram.bot_token,
     chatId: telegram.chat_id,
     filePath: changelogFile,
@@ -96,7 +113,16 @@ export async function deliverTelegramChangelog({
     caption:
       `📝 ${documentTitle}\n\n` +
       `App: ${appName}\nPlatform: ${platform}\nVersion: ${version}`,
+    receiptPath,
+    receipt: {
+      delivery: `${receiptPrefix}_document`,
+      version,
+    },
   });
+  if (receiptPath && !document) {
+    throw new Error(`Telegram rejected the ${label} document`);
+  }
+  return document;
 }
 
 function resolveUploadProvider(config, platform) {
@@ -158,6 +184,7 @@ export async function performUpload({
   buildFilePath,
   previousVersion,
   additionalChangelogDeliveries = [],
+  telegramReceiptPath,
 }) {
   console.log(`Starting the upload process for ${platform}...`);
 
@@ -220,6 +247,12 @@ export async function performUpload({
         `App: ${appName}\n` +
         `Platform: ${platform}\n` +
         `Version: ${version}`,
+      receiptPath: telegramReceiptPath,
+      receipt: {
+        delivery: 'android_apk',
+        version,
+        platform,
+      },
     });
     if (!apkSent) {
       throw new Error(
@@ -236,6 +269,12 @@ export async function performUpload({
         `Platform: ${platform}\n` +
         `Version: ${version}\n\n` +
         `APK has been sent as a Telegram document.`,
+      receiptPath: telegramReceiptPath,
+      receipt: {
+        delivery: 'android_build_notification',
+        version,
+        platform,
+      },
     });
     console.log('Telegram APK delivery completed successfully!');
   } else {
@@ -324,7 +363,7 @@ export async function performUpload({
     console.log('');
 
     if (telegram) {
-      await sendTelegramMessage({
+      const notification = await sendTelegramMessage({
         botToken: telegram.bot_token,
         chatId: telegram.chat_id,
         topicId,
@@ -334,7 +373,16 @@ export async function performUpload({
           `Platform: ${platform}\n` +
           `Version: ${version}\n\n` +
           `📱 <b>Install URL:</b>\n${installUrl}`,
+        receiptPath: telegramReceiptPath,
+        receipt: {
+          delivery: 'build_upload_notification',
+          version,
+          platform,
+        },
       });
+      if (telegramReceiptPath && !notification) {
+        throw new Error('Telegram rejected the build upload notification');
+      }
     }
   }
 
@@ -355,6 +403,8 @@ export async function performUpload({
       platform,
       version,
       previousVersion,
+      receiptPath: telegramReceiptPath,
+      receiptPrefix: 'incremental',
     });
   }
 
@@ -373,6 +423,8 @@ export async function performUpload({
         label: delivery.label ?? 'additional changelog',
         summaryTitle: delivery.summaryTitle ?? 'Release Summary',
         documentTitle: delivery.documentTitle ?? 'Changelog',
+        receiptPath: telegramReceiptPath,
+        receiptPrefix: delivery.receiptPrefix ?? 'additional',
       });
     }
   }
@@ -384,6 +436,7 @@ export async function sendFailureTelegram({
   platform,
   errorMessage,
   topicIdOverride,
+  telegramReceiptPath,
 }) {
   const telegram = getTelegramSection(config);
   if (!telegram) return;
@@ -404,6 +457,12 @@ export async function sendFailureTelegram({
       `Platform: ${platform}\n` +
       `Version: ${version}\n` +
       `Error: ${errorMessage ?? 'Unknown error'}`,
+    receiptPath: telegramReceiptPath,
+    receipt: {
+      delivery: 'build_failure_notification',
+      version,
+      platform,
+    },
   });
 }
 
@@ -418,6 +477,7 @@ export async function performBuild({
   iosArchiveSigning,
   previousVersion,
   additionalChangelogDeliveries,
+  telegramReceiptPath,
 }) {
   let buildSuccess = false;
   let errorMessage;
@@ -492,6 +552,7 @@ export async function performBuild({
       buildFilePath: artifact.path,
       previousVersion,
       additionalChangelogDeliveries,
+      telegramReceiptPath,
     });
 
     console.log('Build and upload process completed successfully!');
@@ -511,6 +572,7 @@ export async function performBuild({
       platform,
       errorMessage,
       topicIdOverride,
+      telegramReceiptPath,
     });
     process.exit(1);
   }

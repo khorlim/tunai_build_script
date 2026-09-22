@@ -62,6 +62,7 @@ Options:
   --no-bump-build               With --bump-version: never bump build (non-TTY default for patch/minor/major)
   --project-root <dir>          Flutter app root
   --topic-id <id>               Telegram forum thread (overrides config / TELEGRAM_TOPIC_ID)
+  --telegram-receipt <path>     Absolute JSON path for atomically persisted Telegram message IDs
   --test-telegram               Send a test Telegram message (needs config + telegram.*)
   --test-upload-file <path>     Send a file via Telegram (path relative to project root)
   --test-changelog-summary <path>  Summarize a changelog with Claude and send it to Telegram
@@ -152,6 +153,7 @@ function parseArgs(argv) {
     noUpdate: false,
     uploadChangelog: null,
     topicId: null,
+    telegramReceipt: null,
     testTelegram: false,
     testUploadFile: null,
     testChangelogSummary: null,
@@ -263,6 +265,17 @@ function parseArgs(argv) {
     else if (a === '--no-update') out.noUpdate = true;
     else if (a === '--upload-changelog') out.uploadChangelog = argv[++i];
     else if (a === '--topic-id') out.topicId = argv[++i];
+    else if (a === '--telegram-receipt') {
+      out.telegramReceipt = argv[++i];
+      if (!out.telegramReceipt || out.telegramReceipt.startsWith('-')) {
+        console.error('Error: --telegram-receipt requires an absolute JSON path');
+        process.exit(1);
+      }
+      if (!path.isAbsolute(out.telegramReceipt)) {
+        console.error('Error: --telegram-receipt path must be absolute');
+        process.exit(1);
+      }
+    }
     else if (a === '--test-telegram') out.testTelegram = true;
     else if (a === '--test-upload-file') out.testUploadFile = argv[++i];
     else if (a === '--test-changelog-summary') {
@@ -663,6 +676,12 @@ async function main() {
       return;
     }
 
+    if (!args.telegramReceipt) {
+      throw new Error(
+        '--release-candidate requires --telegram-receipt so every Telegram delivery has durable message-ID evidence',
+      );
+    }
+
     const release = await runPrepareRelease({
       projectRoot,
       bumpType: 'build',
@@ -694,6 +713,7 @@ async function main() {
       topicIdOverride:
         args.topicId || process.env.TELEGRAM_TOPIC_ID || undefined,
       previousVersion: release.previousVersion,
+      telegramReceiptPath: args.telegramReceipt,
       additionalChangelogDeliveries: cumulativeChangelog
         ? [
             {
@@ -703,6 +723,7 @@ async function main() {
               label: 'cumulative changelog',
               summaryTitle: 'Full Release Summary',
               documentTitle: 'Full changelog since production',
+              receiptPrefix: 'cumulative',
             },
           ]
         : [],
@@ -809,6 +830,7 @@ async function main() {
       topicIdOverride:
         args.topicId || process.env.TELEGRAM_TOPIC_ID || undefined,
       previousVersion: release.previousVersion,
+      telegramReceiptPath: args.telegramReceipt,
     });
     return;
   }
@@ -902,6 +924,8 @@ async function main() {
       chatId: telegram.chat_id,
       topicId: topicOverride || telegram.topic_id,
       text: testMessage,
+      receiptPath: args.telegramReceipt,
+      receipt: { delivery: 'telegram_test' },
     });
     console.log('Test completed. Check your Telegram chat.');
     return;
@@ -926,6 +950,8 @@ async function main() {
       filePath,
       topicId: topicOverride || telegram.topic_id,
       caption: '🧪 Test file upload from tunai-build-script',
+      receiptPath: args.telegramReceipt,
+      receipt: { delivery: 'telegram_test_document' },
     });
     console.log('Test completed. Check your Telegram chat.');
     return;
@@ -977,12 +1003,19 @@ async function main() {
     });
     const messages = Array.isArray(generated) ? generated : [generated];
     let allSent = true;
-    for (const text of messages) {
+    for (const [index, text] of messages.entries()) {
       const sent = await sendTelegramMessage({
         botToken: telegram.bot_token,
         chatId: telegram.chat_id,
         topicId: topicOverride || telegram.topic_id,
         text,
+        receiptPath: args.telegramReceipt,
+        receipt: {
+          delivery: 'changelog_summary_test',
+          part: index + 1,
+          total_parts: messages.length,
+          version,
+        },
       });
       if (!sent) allSent = false;
     }
@@ -1021,6 +1054,7 @@ async function main() {
       platform,
       changelogRelativePath: changelogEffective,
       topicIdOverride: topicOverride,
+      telegramReceiptPath: args.telegramReceipt,
     });
     return;
   }
@@ -1032,6 +1066,7 @@ async function main() {
     update: !args.noUpdate,
     changelogRelativePath: changelogEffective,
     topicIdOverride: topicOverride,
+    telegramReceiptPath: args.telegramReceipt,
   });
 }
 

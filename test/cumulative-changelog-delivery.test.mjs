@@ -12,6 +12,7 @@ test('cumulative summary and document use the separate Telegram destination', as
   t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
   const changelogRelativePath = 'changelog_tester_since_prod.md';
   const changelogFile = path.join(projectRoot, changelogRelativePath);
+  const receiptPath = path.join(projectRoot, 'telegram-delivery.json');
   fs.writeFileSync(changelogFile, '# Tester changelog\n', 'utf8');
 
   const calls = [];
@@ -35,6 +36,8 @@ test('cumulative summary and document use the separate Telegram destination', as
     label: 'cumulative changelog',
     summaryTitle: 'Full Release Summary',
     documentTitle: 'Full changelog since production',
+    receiptPath,
+    receiptPrefix: 'cumulative',
     generateSummaryImpl: async (args) => {
       calls.push({ type: 'summary', args });
       return ['full summary part 1', 'full summary part 2'];
@@ -52,6 +55,19 @@ test('cumulative summary and document use the separate Telegram destination', as
   assert.equal(delivered, true);
   assert.equal(calls[0].args.title, 'Full Release Summary');
   assert.equal(calls[0].args.previousVersion, '1.0.183+277');
+  assert.equal(calls[1].args.receiptPath, receiptPath);
+  assert.deepEqual(calls[1].args.receipt, {
+    delivery: 'cumulative_summary',
+    part: 1,
+    total_parts: 2,
+    version: '1.0.184+284',
+  });
+  assert.deepEqual(calls[2].args.receipt, {
+    delivery: 'cumulative_summary',
+    part: 2,
+    total_parts: 2,
+    version: '1.0.184+284',
+  });
   assert.deepEqual(
     {
       chatId: calls[1].args.chatId,
@@ -80,4 +96,51 @@ test('cumulative summary and document use the separate Telegram destination', as
   assert.equal(calls[3].args.topicId, '14332');
   assert.equal(calls[3].args.filePath, changelogFile);
   assert.match(calls[3].args.caption, /Full changelog since production/);
+  assert.equal(calls[3].args.receiptPath, receiptPath);
+  assert.deepEqual(calls[3].args.receipt, {
+    delivery: 'cumulative_document',
+    version: '1.0.184+284',
+  });
+});
+
+test('receipt-backed changelog delivery stops when summary evidence cannot be persisted', async (t) => {
+  const projectRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'tunai-strict-telegram-receipt-'),
+  );
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(projectRoot, 'changelog_tester.md'),
+    '# Tester changelog\n',
+    'utf8',
+  );
+  let documentCalls = 0;
+
+  await assert.rejects(
+    deliverTelegramChangelog({
+      projectRoot,
+      changelogRelativePath: 'changelog_tester.md',
+      telegram: {
+        bot_token: 'bot-token',
+        chat_id: '-1001',
+        topic_id: '77',
+      },
+      summaryConfig: { model: 'haiku' },
+      appName: 'TunaiPro',
+      platform: 'ios',
+      version: '1.0.189+327',
+      receiptPath: path.join(projectRoot, 'telegram-delivery.json'),
+      generateSummaryImpl: async () => ['summary'],
+      sendMessageImpl: async () => {
+        throw new Error(
+          'Telegram delivered message_id=17912, but its receipt could not be persisted',
+        );
+      },
+      sendDocumentImpl: async () => {
+        documentCalls += 1;
+        return true;
+      },
+    }),
+    /message_id=17912/,
+  );
+  assert.equal(documentCalls, 0);
 });
