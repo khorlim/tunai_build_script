@@ -4,7 +4,7 @@
   "description": "Flutter build, tester distribution, release candidates, versioning, and macOS TestFlight helpers",
   "type": "module",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.18.1"
   },
   "bin": {
     "tunai-build-script": "node/bin/tunai-build-script.mjs"

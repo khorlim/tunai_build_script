@@ -2,6 +2,39 @@ import fs from 'fs';
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { Blob } from 'node:buffer';
+import { Agent } from 'undici';
+
+// Own a standard direct connector: a global proxy/custom dispatcher can report
+// the same refusal codes for a connection that is not to Telegram.
+const telegramDispatcher = new Agent();
+
+// Only errors that establish no HTTP request reached Telegram may be retried.
+// A bare "fetch failed", reset socket, or response timeout is ambiguous: the
+// message may already have been accepted even though we missed its response.
+const SAFE_PRE_REQUEST_CODES = new Set([
+  'EAI_AGAIN', // DNS resolution failed temporarily
+  'ECONNREFUSED', // TCP connection was refused
+  'UND_ERR_CONNECT_TIMEOUT', // Undici timed out establishing TCP connection
+]);
+const RETRY_DELAYS_MS = [100, 200];
+
+async function fetchTelegram(url, options) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(url, { ...options, redirect: 'error', dispatcher: telegramDispatcher });
+    } catch (error) {
+      if (
+        !(error instanceof TypeError) ||
+        error.message !== 'fetch failed' ||
+        !SAFE_PRE_REQUEST_CODES.has(error.cause?.code) ||
+        attempt >= RETRY_DELAYS_MS.length
+      ) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
 
 function threadIdField(topicId) {
   if (topicId === undefined || topicId === null) return undefined;
@@ -154,7 +187,7 @@ export async function sendTelegramMessage({
   const tid = threadIdField(topicId);
   if (tid !== undefined) body.message_thread_id = tid;
 
-  const res = await fetch(url, {
+  const res = await fetchTelegram(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -207,7 +240,7 @@ export async function sendTelegramDocument({
   if (caption) form.append('caption', caption);
   form.append('document', blob, path.basename(filePath));
 
-  const res = await fetch(url, {
+  const res = await fetchTelegram(url, {
     method: 'POST',
     body: form,
   });

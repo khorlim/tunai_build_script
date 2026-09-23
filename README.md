@@ -6,6 +6,8 @@ Configuration lives in a single file at the **Flutter app root**: `tunai_build_s
 
 ## Install from Git
 
+Requires Node.js 20.18.1 or newer (including on the host running the CLI); this matches the minimum supported by its Undici dependency.
+
 Repository: [github.com/khorlim/tunai_build_script](https://github.com/khorlim/tunai_build_script)
 
 In your app or globally:
@@ -103,7 +105,7 @@ Run **`tunai-build-script -help`** for the full option list.
 
 Builds a final-testing IPA with the production runtime channel and production bundle identifier, signs it for ad-hoc installation, verifies the completed IPA, and uploads it to Buildport. It intentionally does not require a particular branch or approved SHA.
 
-The command requires a clean git tree because it reuses `--prepare-release build`: it bumps the build number, writes scoped changelogs, commits, pushes, creates an annotated RC tag, and pushes that tag before building. A real run also requires `--telegram-receipt` with an absolute JSON path in an existing private release-claim directory. Each successful Telegram response is recorded there immediately with its real `message_id`, chat, topic, delivery role, and summary part number using an atomic file replacement. If Telegram accepts a message but the receipt cannot be written, the command reports that message ID and stops. Use `--dry-run` to validate configuration and preview these steps without writing channel files or changing git.
+The command requires a clean git tree because it reuses `--prepare-release build`: it bumps the build number, writes scoped changelogs, commits, pushes, creates an annotated RC tag, and pushes that tag before building. A real run also requires `--telegram-receipt` with an absolute JSON path in an existing private release-claim directory. Each successful Telegram response is recorded there immediately with its real `message_id`, chat, topic, delivery role, and summary part number using an atomic file replacement. If Telegram accepts a message but the receipt cannot be written, the command reports that message ID and stops. Telegram message and document sends use an explicit direct Undici dispatcher (not a configured global proxy/custom dispatcher), reject redirects without following them, and retry at most twice (100 ms then 200 ms) only when Node fetch reports a pre-request transport cause: temporary DNS failure (`EAI_AGAIN`), refused TCP connection (`ECONNREFUSED`), or Undici connect timeout (`UND_ERR_CONNECT_TIMEOUT`). Generic `fetch failed`, socket resets, response timeouts, redirects, API rejections, and missing acknowledgements are not retried: Telegram may have accepted the request despite the missing response. Receipts are written only after a valid acknowledged message ID; they do not provide server-side idempotency or safely permit replay of an ambiguous failure. Use `--dry-run` to validate configuration and preview these steps without writing channel files or changing git.
 
 Required configuration:
 
