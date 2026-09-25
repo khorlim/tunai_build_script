@@ -6,7 +6,11 @@ import { Agent } from 'undici';
 
 // Own a standard direct connector: a global proxy/custom dispatcher can report
 // the same refusal codes for a connection that is not to Telegram.
-const telegramDispatcher = new Agent();
+// The default 250 ms family attempt can expire a working IPv4 connection before
+// falling back to an unreachable IPv6 route. Give each address a full second.
+const telegramDispatcher = new Agent({
+  connect: { autoSelectFamily: true, autoSelectFamilyAttemptTimeout: 1000 },
+});
 
 // Only errors that establish no HTTP request reached Telegram may be retried.
 // A bare "fetch failed", reset socket, or response timeout is ambiguous: the
@@ -18,15 +22,34 @@ const SAFE_PRE_REQUEST_CODES = new Set([
 ]);
 const RETRY_DELAYS_MS = [100, 200];
 
+const CONNECT_FAILURE_CODES = new Set([
+  'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'ECONNREFUSED',
+]);
+
+function isConnectFailure(error) {
+  return error instanceof Error && error.syscall === 'connect' &&
+    CONNECT_FAILURE_CODES.has(error.code);
+}
+
+function isPreRequestFailure(error) {
+  if (!(error instanceof TypeError) || error.message !== 'fetch failed') return false;
+  const cause = error.cause;
+  // Node aggregates IPv4/IPv6 connection attempts. Every member must prove a
+  // failed connect; a timeout code alone could instead follow an accepted POST.
+  if (cause instanceof AggregateError) {
+    return Array.isArray(cause.errors) && cause.errors.length > 0 &&
+      Array.from(cause.errors).every(isConnectFailure);
+  }
+  return SAFE_PRE_REQUEST_CODES.has(cause?.code) || isConnectFailure(cause);
+}
+
 async function fetchTelegram(url, options) {
   for (let attempt = 0; ; attempt++) {
     try {
       return await fetch(url, { ...options, redirect: 'error', dispatcher: telegramDispatcher });
     } catch (error) {
       if (
-        !(error instanceof TypeError) ||
-        error.message !== 'fetch failed' ||
-        !SAFE_PRE_REQUEST_CODES.has(error.cause?.code) ||
+        !isPreRequestFailure(error) ||
         attempt >= RETRY_DELAYS_MS.length
       ) {
         throw error;
