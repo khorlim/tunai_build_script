@@ -24,6 +24,79 @@ function resolvePath(projectRoot, rel) {
   return path.isAbsolute(rel) ? rel : path.join(projectRoot, rel);
 }
 
+const SAFE_ERROR_NAMES = new Set([
+  'Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'AbortError',
+  'AggregateError', 'TimeoutError', 'ConnectTimeoutError',
+]);
+const SAFE_ERROR_CODES = new Set([
+  'EAI_AGAIN', 'ENOTFOUND', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET', 'ABORT_ERR',
+]);
+
+// Read only data properties; getters (including inherited ones) may run arbitrary code.
+function ownData(object, key) {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined; // A Proxy can also trap descriptor inspection.
+  }
+}
+
+function safeErrorName(error) {
+  let current = error;
+  for (let depth = 0; current && depth < 4; depth++) {
+    const name = ownData(current, 'name');
+    if (SAFE_ERROR_NAMES.has(name)) return name;
+    // An own accessor must not be bypassed by an inherited name.
+    try {
+      if (Object.getOwnPropertyDescriptor(current, 'name')) break;
+      current = Object.getPrototypeOf(current);
+    } catch {
+      break;
+    }
+  }
+  return undefined;
+}
+
+// Never stringify an exception: messages, stacks and arbitrary codes can contain
+// the bot URL, token, or summary payload. Bound both nodes and array fanout.
+export function safeSummaryErrorDetails(error) {
+  const details = [];
+  const seen = new Set();
+  const pending = [error];
+  while (pending.length && details.length < 8) {
+    const current = pending.shift();
+    if (!current || typeof current !== 'object' || seen.has(current)) continue;
+    seen.add(current);
+    const entry = {};
+    const name = safeErrorName(current);
+    const code = ownData(current, 'code');
+    if (name) entry.name = name;
+    if (SAFE_ERROR_CODES.has(code)) entry.code = code;
+    details.push(entry);
+    pending.push(ownData(current, 'cause'));
+    const errors = ownData(current, 'errors');
+    if (name === 'AggregateError') {
+      // IsArray itself throws for revoked Proxies, even before descriptor reads.
+      let isArray = false;
+      try {
+        isArray = Array.isArray(errors);
+      } catch {
+        // Ignore hostile metadata without masking the original exception.
+      }
+      if (isArray) {
+        const length = ownData(errors, 'length');
+        for (let i = 0; i < Math.min(Number.isSafeInteger(length) && length >= 0 ? length : 0, 8); i++) {
+          pending.push(ownData(errors, String(i)));
+        }
+      }
+    }
+  }
+  return JSON.stringify(details);
+}
+
 export async function deliverTelegramChangelog({
   projectRoot,
   changelogRelativePath,
@@ -51,10 +124,9 @@ export async function deliverTelegramChangelog({
   }
 
   if (summaryConfig) {
+    let stage = 'generation';
     try {
-      console.log(
-        `Generating Telegram ${label} summary with Claude (${summaryConfig.model})...`,
-      );
+      console.log(`Generating Telegram ${label} summary with Claude...`);
       const generated = await generateSummaryImpl({
         changelogFile,
         appName,
@@ -66,7 +138,9 @@ export async function deliverTelegramChangelog({
       });
       const messages = Array.isArray(generated) ? generated : [generated];
       let allSent = true;
+      let firstFailedStage;
       for (const [index, text] of messages.entries()) {
+        stage = `summary part ${index + 1} send`;
         const sent = await sendMessageImpl({
           botToken: telegram.bot_token,
           chatId: telegram.chat_id,
@@ -80,9 +154,13 @@ export async function deliverTelegramChangelog({
             version,
           },
         });
-        if (!sent) allSent = false;
+        if (!sent) {
+          allSent = false;
+          firstFailedStage ??= stage;
+        }
       }
       if (!allSent) {
+        stage = firstFailedStage;
         if (receiptPath) {
           throw new Error(`Telegram rejected the AI ${label} summary`);
         }
@@ -91,13 +169,13 @@ export async function deliverTelegramChangelog({
         );
       }
     } catch (error) {
+      const diagnostic = `stage=${stage} error=${safeSummaryErrorDetails(error)}`;
       if (receiptPath) {
-        throw new Error(
-          `AI ${label} summary delivery failed: ${error?.message ?? error}`,
-        );
+        console.warn(`AI ${label} summary delivery failed (${diagnostic})`);
+        throw new Error(`AI ${label} summary delivery failed (${diagnostic})`);
       }
       console.warn(
-        `Warning: AI ${label} summary failed; continuing with the ${label} document. ${error?.message ?? error}`,
+        `Warning: AI ${label} summary failed (${diagnostic}); continuing with the ${label} document.`,
       );
     }
   }
@@ -105,20 +183,25 @@ export async function deliverTelegramChangelog({
   const uploadLabel =
     label === 'changelog' ? 'changelog' : `${label}`;
   console.log(`Uploading ${uploadLabel} file: ${changelogFile}`);
-  const document = await sendDocumentImpl({
-    botToken: telegram.bot_token,
-    chatId: telegram.chat_id,
-    filePath: changelogFile,
-    topicId: telegram.topic_id,
-    caption:
-      `📝 ${documentTitle}\n\n` +
-      `App: ${appName}\nPlatform: ${platform}\nVersion: ${version}`,
-    receiptPath,
-    receipt: {
-      delivery: `${receiptPrefix}_document`,
-      version,
-    },
-  });
+  let document;
+  try {
+    document = await sendDocumentImpl({
+      botToken: telegram.bot_token,
+      chatId: telegram.chat_id,
+      filePath: changelogFile,
+      topicId: telegram.topic_id,
+      caption:
+        `📝 ${documentTitle}\n\n` +
+        `App: ${appName}\nPlatform: ${platform}\nVersion: ${version}`,
+      receiptPath,
+      receipt: {
+        delivery: `${receiptPrefix}_document`,
+        version,
+      },
+    });
+  } catch (error) {
+    throw new Error(`Telegram ${label} document send failed (error=${safeSummaryErrorDetails(error)})`);
+  }
   if (receiptPath && !document) {
     throw new Error(`Telegram rejected the ${label} document`);
   }
@@ -478,6 +561,7 @@ export async function performBuild({
   previousVersion,
   additionalChangelogDeliveries,
   telegramReceiptPath,
+  performUploadImpl = performUpload,
 }) {
   let buildSuccess = false;
   let errorMessage;
@@ -543,7 +627,7 @@ export async function performBuild({
       console.log('Build artifact validation passed');
     }
 
-    await performUpload({
+    await performUploadImpl({
       projectRoot,
       config,
       platform,

@@ -11,7 +11,7 @@ import {
   getTelegramSection,
 } from '../lib/config.mjs';
 import { detectPlatform } from '../lib/platform-detect.mjs';
-import { performBuild, performUpload } from '../lib/build.mjs';
+import { performBuild, performUpload, safeSummaryErrorDetails } from '../lib/build.mjs';
 import { sendTelegramMessage, sendTelegramDocument } from '../lib/telegram.mjs';
 import { getAppInfo } from '../lib/app-info.mjs';
 import { getVersion } from '../lib/pubspec.mjs';
@@ -991,39 +991,44 @@ async function main() {
     const appInfo = getAppInfo(projectRoot, platform);
     const appName = appInfo.app_group || appInfo.name || 'App';
     const version = getVersion(projectRoot) || 'unknown';
-    console.log(
-      `Generating Telegram changelog summary with Claude (${summaryConfig.model})...`,
-    );
-    const generated = await generateChangelogSummary({
-      changelogFile,
-      appName,
-      platform,
-      version,
-      summaryConfig,
-    });
-    const messages = Array.isArray(generated) ? generated : [generated];
-    let allSent = true;
-    for (const [index, text] of messages.entries()) {
-      const sent = await sendTelegramMessage({
-        botToken: telegram.bot_token,
-        chatId: telegram.chat_id,
-        topicId: topicOverride || telegram.topic_id,
-        text,
-        receiptPath: args.telegramReceipt,
-        receipt: {
-          delivery: 'changelog_summary_test',
-          part: index + 1,
-          total_parts: messages.length,
-          version,
-        },
+    let stage = 'generation';
+    try {
+      console.log('Generating Telegram changelog summary with Claude...');
+      const generated = await generateChangelogSummary({
+        changelogFile,
+        appName,
+        platform,
+        version,
+        summaryConfig,
       });
-      if (!sent) allSent = false;
+      const messages = Array.isArray(generated) ? generated : [generated];
+      let allSent = true;
+      for (const [index, text] of messages.entries()) {
+        stage = `summary part ${index + 1} send`;
+        const sent = await sendTelegramMessage({
+          botToken: telegram.bot_token,
+          chatId: telegram.chat_id,
+          topicId: topicOverride || telegram.topic_id,
+          text,
+          receiptPath: args.telegramReceipt,
+          receipt: {
+            delivery: 'changelog_summary_test',
+            part: index + 1,
+            total_parts: messages.length,
+            version,
+          },
+        });
+        if (!sent) allSent = false;
+      }
+      if (!allSent) {
+        throw new Error('Telegram rejected the AI changelog summary');
+      }
+      console.log('AI changelog summary test completed. Check Telegram.');
+      return;
+    } catch (error) {
+      console.error(`AI changelog summary test failed (stage=${stage} error=${safeSummaryErrorDetails(error)})`);
+      process.exit(1);
     }
-    if (!allSent) {
-      throw new Error('Telegram rejected the AI changelog summary');
-    }
-    console.log('AI changelog summary test completed. Check Telegram.');
-    return;
   }
 
   let platform = args.platform;

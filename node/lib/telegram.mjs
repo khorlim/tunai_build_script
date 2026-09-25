@@ -45,24 +45,6 @@ function threadIdField(topicId) {
 }
 
 /**
- * @param {Response} res
- * @returns {Promise<string>}
- */
-async function formatTelegramApiError(res) {
-  const text = await res.text();
-  if (!text?.trim()) return '(empty response body)';
-  try {
-    const j = JSON.parse(text);
-    if (j && typeof j === 'object' && j.description) {
-      return `${j.description} (ok=${j.ok})`;
-    }
-    return text;
-  } catch {
-    return text;
-  }
-}
-
-/**
  * Telegram Bot API can return HTTP 200 with { ok: false }.
  * We must validate both HTTP and payload-level success.
  *
@@ -206,13 +188,8 @@ export async function sendTelegramMessage({
     );
     return result;
   } else {
-    const err =
-      parsed.description ||
-      (await formatTelegramApiError(res)) ||
-      'Unknown Telegram error';
-    console.error(
-      `Failed to send Telegram notification: ${res.status} - ${err}`,
-    );
+    // API descriptions are untrusted and may echo the request URL or payload.
+    console.error(`Failed to send Telegram notification: HTTP ${res.status}`);
     return false;
   }
 }
@@ -262,11 +239,8 @@ export async function sendTelegramDocument({
     );
     return result;
   } else {
-    const err =
-      parsed.description ||
-      (await formatTelegramApiError(res)) ||
-      'Unknown Telegram error';
-    console.error(`Failed to send Telegram file: ${res.status} - ${err}`);
+    // API descriptions and response bodies may echo the bot URL or payload.
+    console.error(`Failed to send Telegram file: HTTP ${res.status}`);
     return false;
   }
 }

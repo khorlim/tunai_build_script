@@ -114,6 +114,9 @@ test('receipt-backed changelog delivery stops when summary evidence cannot be pe
     'utf8',
   );
   let documentCalls = 0;
+  const receiptError = new Error(
+    'Telegram delivered message_id=17912, but its receipt could not be persisted',
+  );
 
   await assert.rejects(
     deliverTelegramChangelog({
@@ -131,16 +134,19 @@ test('receipt-backed changelog delivery stops when summary evidence cannot be pe
       receiptPath: path.join(projectRoot, 'telegram-delivery.json'),
       generateSummaryImpl: async () => ['summary'],
       sendMessageImpl: async () => {
-        throw new Error(
-          'Telegram delivered message_id=17912, but its receipt could not be persisted',
-        );
+        throw receiptError;
       },
       sendDocumentImpl: async () => {
         documentCalls += 1;
         return true;
       },
     }),
-    /message_id=17912/,
+    (error) => {
+      assert.equal(error.cause, undefined);
+      assert.match(error.message, /summary part 1 send/);
+      assert.doesNotMatch(error.message, /message_id=17912/);
+      return true;
+    },
   );
   assert.equal(documentCalls, 0);
 });
