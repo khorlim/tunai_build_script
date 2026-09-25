@@ -116,6 +116,74 @@ function accepted(messageId) {
   return new Response(JSON.stringify({ ok: true, result: { message_id: messageId } }), { status: 200 });
 }
 
+function connectError(code, syscall = 'connect') {
+  return Object.assign(new Error('connection failed'), { code, syscall });
+}
+
+function aggregateFailure(errors, code = 'ETIMEDOUT') {
+  return new TypeError('fetch failed', {
+    cause: Object.assign(new AggregateError(errors), { code }),
+  });
+}
+
+for (const kind of ['message', 'document']) {
+  test(`IPv4 timeout plus unreachable IPv6 retries ${kind} and records one acknowledgement`, async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-dual-stack-'));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const receiptPath = path.join(directory, 'receipt.json');
+    const filePath = path.join(directory, 'changelog.md');
+    fs.writeFileSync(filePath, 'release notes');
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      if (++calls === 1) throw aggregateFailure([
+        connectError('ETIMEDOUT'), connectError('EHOSTUNREACH'),
+      ]);
+      return accepted(6015);
+    };
+    t.after(() => { globalThis.fetch = originalFetch; });
+    const options = { botToken: 'test-token', chatId: '-1001', text: 'summary',
+      filePath, receiptPath, receipt: { delivery: kind } };
+    const result = await (kind === 'message' ? sendTelegramMessage : sendTelegramDocument)(options);
+    assert.equal(result.messageId, 6015);
+    assert.equal(calls, 2);
+    assert.equal(JSON.parse(fs.readFileSync(receiptPath)).deliveries.length, 1);
+  });
+}
+
+test('combined connection failures stop after three attempts without a receipt', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-dual-limit-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const receiptPath = path.join(directory, 'receipt.json');
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    throw aggregateFailure([connectError('ETIMEDOUT'), connectError('EHOSTUNREACH')]);
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  await assert.rejects(sendTelegramMessage({ botToken: 'test-token', chatId: '-1001', text: 'summary', receiptPath }));
+  assert.equal(calls, 3);
+  assert.equal(fs.existsSync(receiptPath), false);
+});
+
+for (const [name, failure] of [
+  ['mixed connection and read timeout', aggregateFailure([connectError('ETIMEDOUT'), connectError('ETIMEDOUT', 'read')])],
+  ['missing connection syscall', aggregateFailure([connectError('EHOSTUNREACH'), Object.assign(new Error(), { code: 'ETIMEDOUT' })])],
+  ['empty aggregate', aggregateFailure([])],
+  ['refused aggregate with ambiguous member', aggregateFailure([connectError('ECONNREFUSED'), connectError('ECONNRESET', 'read')], 'ECONNREFUSED')],
+  ['write timeout', new TypeError('fetch failed', { cause: connectError('ETIMEDOUT', 'write') })],
+]) {
+  test(`${name} must not replay a possibly accepted request`, async (t) => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; throw failure; };
+    t.after(() => { globalThis.fetch = originalFetch; });
+    await assert.rejects(sendTelegramMessage({ botToken: 'test-token', chatId: '-1001', text: 'summary' }), e => e === failure);
+    assert.equal(calls, 1);
+  });
+}
+
 test('temporary DNS failure retries message and persists one receipt after acknowledgement', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-retry-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
