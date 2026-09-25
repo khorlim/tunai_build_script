@@ -446,23 +446,35 @@ export async function performUpload({
     console.log('');
 
     if (telegram) {
-      const notification = await sendTelegramMessage({
-        botToken: telegram.bot_token,
-        chatId: telegram.chat_id,
-        topicId,
-        text:
-          `✅ <b>Build & Upload Completed Successfully</b>\n\n` +
-          `App: ${appName}\n` +
-          `Platform: ${platform}\n` +
-          `Version: ${version}\n\n` +
-          `📱 <b>Install URL:</b>\n${installUrl}`,
-        receiptPath: telegramReceiptPath,
-        receipt: {
-          delivery: 'build_upload_notification',
-          version,
-          platform,
-        },
-      });
+      let notification;
+      try {
+        notification = await sendTelegramMessage({
+          botToken: telegram.bot_token,
+          chatId: telegram.chat_id,
+          topicId,
+          text:
+            `✅ <b>Build & Upload Completed Successfully</b>\n\n` +
+            `App: ${appName}\n` +
+            `Platform: ${platform}\n` +
+            `Version: ${version}\n\n` +
+            `📱 <b>Install URL:</b>\n${installUrl}`,
+          receiptPath: telegramReceiptPath,
+          receipt: {
+            delivery: 'build_upload_notification',
+            version,
+            platform,
+          },
+        });
+      } catch (error) {
+        if (error instanceof TypeError && error.message === 'fetch failed') {
+          // Never retain or print the original error: its cause may include the
+          // token-bearing request URL or payload. The POST outcome is unknown.
+          throw new Error(
+            `Telegram build upload notification transport failed; delivery outcome unknown: ${safeSummaryErrorDetails(error)}`,
+          );
+        }
+        throw error;
+      }
       if (telegramReceiptPath && !notification) {
         throw new Error('Telegram rejected the build upload notification');
       }
