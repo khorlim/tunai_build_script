@@ -814,38 +814,30 @@ test('structured and fallback output reject substituted source IDs', () => {
   );
 });
 
-test('structured and fallback output reject substituted source categories', () => {
+test('trusted IDs restore order, indexes and categories in structured and fenced fallback output', () => {
   const changes = [
-    {
-      source_index: 1,
-      source_id: 'aaaaaaaaaaaa',
-      category: 'feature',
-      module: 'Orders',
-      feature: 'Cart',
-      summary: 'Clear all items',
-    },
+    {source_id: 'bbbbbbbbbbbb', source_index: 1, category: 'docs', module: ' Reports ', feature: ' Second ', summary: ' Second change '},
+    {source_id: 'aaaaaaaaaaaa', module: 'Orders', feature: 'First', summary: 'First change'},
   ];
+  const args = [2, ['aaaaaaaaaaaa','bbbbbbbbbbbb'], ['fix','feature'], [51,54]];
+  const actual = parseClaudeOutput(JSON.stringify({structured_output:{changes}}), ...args);
+  const fallback = parsePlainTextFallbackOutput('```json\n'+JSON.stringify({changes})+'\n```', ...args);
+  assert.equal(actual, fallback);
+  assert.match(actual, /Fixes \(1\)/);
+  assert.match(actual, /Features \(1\)/);
+  assert.match(actual, /• First: First change/);
+  assert.match(actual, /• Second: Second change/);
+});
 
-  assert.throws(
-    () =>
-      parseClaudeOutput(
-        JSON.stringify({ structured_output: { changes } }),
-        1,
-        ['aaaaaaaaaaaa'],
-        ['fix'],
-      ),
-    /source categories do not match/,
-  );
-  assert.throws(
-    () =>
-      parsePlainTextFallbackOutput(
-        JSON.stringify({ changes }),
-        1,
-        ['aaaaaaaaaaaa'],
-        ['fix'],
-      ),
-    /source categories do not match/,
-  );
+test('trusted-ID normalization still rejects omissions, duplicates, unknown IDs and empty wording', () => {
+  const first = {source_id:'aaaaaaaaaaaa', module:'Orders', feature:'First', summary:'First change'};
+  const second = {...first, source_id:'bbbbbbbbbbbb'};
+  for (const changes of [[first], [first,first], [first,{...second,source_id:'cccccccccccc'}], [first,{...second,summary:'   '}], [first,{...second,unexpected:true}]]) {
+    const args = [2,['aaaaaaaaaaaa','bbbbbbbbbbbb'],['fix','feature'],[51,54]];
+    assert.throws(() => parseClaudeOutput(JSON.stringify({structured_output:{changes}}), ...args));
+    assert.throws(() => parsePlainTextFallbackOutput(JSON.stringify({changes}), ...args));
+  }
+  assert.throws(() => parsePlainTextFallbackOutput('Intro\n```json\n'+JSON.stringify({changes:[first,second]})+'\n```',2,['aaaaaaaaaaaa','bbbbbbbbbbbb'],['fix','feature']), /invalid JSON/);
 });
 
 test('plain-text fallback rejects non-canonical modules', () => {
