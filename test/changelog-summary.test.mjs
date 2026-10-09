@@ -475,6 +475,44 @@ test('14 internal source batches become one globally grouped Telegram summary', 
   assert.ok(calls.every((call) => call.returnStructured === true));
 });
 
+test('cumulative logs beyond the single-prompt limit preserve every source in bounded batches', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-large-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const changelogFile = path.join(directory, 'changelog.md');
+  const content = Array.from({ length: 32 }, (_, index) =>
+    makeEligibleSectionWithAnnotatedLength({
+      targetChars: 6000,
+      sourceIndex: index + 1,
+      category: 'fix',
+    }),
+  ).join('\n');
+  assert.ok(Array.from(content).length > 180000);
+  fs.writeFileSync(changelogFile, content);
+  const observedIds = [];
+  const messages = await generateChangelogSummary({
+    changelogFile,
+    appName: 'TunaiPro',
+    platform: 'ios',
+    version: '1.0.191+343',
+    summaryConfig: { max_chars: 3000, model: 'haiku', timeout_seconds: 60 },
+    runClaude: async (args) => {
+      assert.ok(Array.from(extractPromptChangelog(args.prompt)).length <= 8000);
+      observedIds.push(...args.expectedSourceIds);
+      return { changes: args.expectedSourceIds.map((source_id, index) => ({
+        source_id,
+        module: 'Orders',
+        feature: `Change ${args.expectedSourceIndexes[index]}`,
+        summary: 'Corrected receipt preview alignment.',
+      })) };
+    },
+  });
+  assert.deepEqual(observedIds, extractEligibleSourceIds(content));
+  const combined = messages.join('\n');
+  for (let index = 1; index <= 32; index += 1) {
+    assert.equal(combined.match(new RegExp(`Change ${index}:`, 'g'))?.length, 1);
+  }
+});
+
 test('annotated source sections allow exactly 8000 characters and reject 8001 before Claude', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-section-limit-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

@@ -48,6 +48,12 @@ Copy `example/tunai_build_script_config.example.json` to your Flutter project ro
 
 Plist templates: `example/example_export_options_ios.plist` (IPA export), `example/example_export_options_macos.plist` (Mac App Store / TestFlight). App Store Connect API key JSON: `example/app_store_connect_api_key.example.json`.
 
+Release summaries process eligible changelog sections in batches of at most
+8,000 annotated source characters. Cumulative logs can exceed 180,000 characters
+in total without truncation; source-ID coverage and Telegram message limits
+still apply. An individual source section above the batch limit is rejected
+before inference. The separate single-prompt builder retains its input limit.
+
 Keep channel switches such as `TestVersion` out of `.env.tunai.defaults`. The test and production channel configs must set them explicitly so a shared default cannot silently override the selected release channel.
 
 `telegram_apk` is Android-only and sends the built APK file directly to Telegram as a document.

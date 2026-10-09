@@ -923,13 +923,8 @@ export async function generateChangelogSummary({
 }) {
   const content = fs.readFileSync(changelogFile, 'utf8');
   if (!content.trim()) throw new Error('Changelog file is empty');
-  const sourceChars = Array.from(content.trim()).length;
-  if (sourceChars > MAX_CHANGELOG_INPUT_CHARS) {
-    throw new Error(
-      `Changelog is too large to summarize without omission (${sourceChars} > ${MAX_CHANGELOG_INPUT_CHARS} characters)`,
-    );
-  }
-
+  // This path sends bounded source batches, never the entire cumulative log.
+  // Keep the whole-input limit on the public single-prompt builder only.
   const sourceMetadata = annotateEligibleSourceIds(content);
   if (sourceMetadata.records.length === 0) return [];
 
