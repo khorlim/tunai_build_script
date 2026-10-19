@@ -926,7 +926,17 @@ export async function generateChangelogSummary({
   // This path sends bounded source batches, never the entire cumulative log.
   // Keep the whole-input limit on the public single-prompt builder only.
   const sourceMetadata = annotateEligibleSourceIds(content);
-  if (sourceMetadata.records.length === 0) return [];
+  if (sourceMetadata.records.length === 0) {
+    return formatTelegramSummaryMessages({
+      summary: 'No user-facing changes are listed in this changelog. See the changelog document for release and maintenance details.',
+      appName,
+      platform,
+      version,
+      previousVersion,
+      maxChars: summaryConfig.max_chars,
+      title,
+    });
+  }
 
   const combinedChanges = [];
   for (const batchRecords of createSourceBatches(sourceMetadata.records)) {
