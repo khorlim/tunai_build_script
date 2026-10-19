@@ -380,11 +380,11 @@ test('PR body formatting demotes forged canonical boundaries inside fences', () 
   );
 });
 
-test('docs-only changelogs skip summary generation cleanly', async (t) => {
+test('maintenance-only changelogs produce a summary without Claude', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-empty-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const changelogFile = path.join(directory, 'changelog.md');
-  fs.writeFileSync(changelogFile, '#### PR #1 — docs: update guide\n', 'utf8');
+  fs.writeFileSync(changelogFile, '#### PR #1 — docs: update guide\n#### PR #2 — chore(release): advance development version\n', 'utf8');
   let claudeCalled = false;
 
   const messages = await generateChangelogSummary({
@@ -399,7 +399,9 @@ test('docs-only changelogs skip summary generation cleanly', async (t) => {
     },
   });
 
-  assert.deepEqual(messages, []);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0], /No user-facing changes are listed/);
+  assert.match(messages[0], /1\.0\.0\+1/);
   assert.equal(claudeCalled, false);
 });
 

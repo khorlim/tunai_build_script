@@ -310,3 +310,21 @@ test('document transport exception after summary fallback is safe in build and f
   assert.match(output, /TypeError/);
   assert.match(output, /ETIMEDOUT/);
 });
+
+test('maintenance-only release delivers one receipted summary before its document', async (t) => {
+  const { options, calls } = fixture(t);
+  fs.writeFileSync(path.join(options.projectRoot, 'changelog.md'),
+    '#### PR #798 — chore(release): record RC metadata\n#### PR #800 — chore(release): advance development version\n');
+  options.summaryConfig.max_chars = 3000;
+  options.sendMessageImpl = async ({ text, receiptPath, receipt }) => {
+    assert.match(text, /No user-facing changes are listed/);
+    assert.equal(receiptPath, options.receiptPath);
+    assert.deepEqual(receipt, {
+      delivery: 'incremental_summary', part: 1, total_parts: 1, version: options.version,
+    });
+    calls.push('summary');
+    return true;
+  };
+  assert.equal(await deliverTelegramChangelog(options), true);
+  assert.deepEqual(calls, ['summary', 'document']);
+});
