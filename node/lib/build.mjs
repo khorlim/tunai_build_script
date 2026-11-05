@@ -16,8 +16,15 @@ import { uploadToApphost } from './apphost-upload.mjs';
 import { collectBuildportChanges } from './buildport-changes.mjs';
 import { uploadToBuildport } from './buildport-upload.mjs';
 import { uploadToLoadly } from './loadly-upload.mjs';
-import { sendTelegramDocument, sendTelegramMessage } from './telegram.mjs';
-import { generateChangelogSummary } from './changelog-summary.mjs';
+import {
+  recordTelegramReceiptEntry,
+  sendTelegramDocument,
+  sendTelegramMessage,
+} from './telegram.mjs';
+import {
+  ChangelogTooLargeError,
+  generateChangelogSummary,
+} from './changelog-summary.mjs';
 
 function resolvePath(projectRoot, rel) {
   if (!rel) return null;
@@ -169,14 +176,31 @@ export async function deliverTelegramChangelog({
         );
       }
     } catch (error) {
-      const diagnostic = `stage=${stage} error=${safeSummaryErrorDetails(error)}`;
-      if (receiptPath) {
-        console.warn(`AI ${label} summary delivery failed (${diagnostic})`);
-        throw new Error(`AI ${label} summary delivery failed (${diagnostic})`);
+      if (error instanceof ChangelogTooLargeError) {
+        // Not a failure: the summary is skipped by configuration and the
+        // document below still goes out. The receipt records why, so a
+        // receipt-backed release can tell a skip from a missing summary.
+        console.warn(
+          `Warning: the ${label} is too large for an AI summary (${error.sourceChars} > ${error.limit} characters); sending the ${label} document only.`,
+        );
+        recordTelegramReceiptEntry(receiptPath, {
+          delivery: `${receiptPrefix}_summary_skipped`,
+          kind: 'skipped',
+          reason: error.code,
+          source_chars: error.sourceChars,
+          limit_chars: error.limit,
+          version,
+        });
+      } else {
+        const diagnostic = `stage=${stage} error=${safeSummaryErrorDetails(error)}`;
+        if (receiptPath) {
+          console.warn(`AI ${label} summary delivery failed (${diagnostic})`);
+          throw new Error(`AI ${label} summary delivery failed (${diagnostic})`);
+        }
+        console.warn(
+          `Warning: AI ${label} summary failed (${diagnostic}); continuing with the ${label} document.`,
+        );
       }
-      console.warn(
-        `Warning: AI ${label} summary failed (${diagnostic}); continuing with the ${label} document.`,
-      );
     }
   }
 

@@ -117,8 +117,7 @@ function telegramDeliveryResult(payload, fallbackChatId, fallbackTopicId) {
   };
 }
 
-function writeTelegramReceipt(receiptPath, delivery, result) {
-  if (!receiptPath) return;
+function appendTelegramReceiptEntry(receiptPath, buildEntry) {
   if (!path.isAbsolute(receiptPath)) {
     throw new Error('Telegram receipt path must be absolute');
   }
@@ -136,14 +135,7 @@ function writeTelegramReceipt(receiptPath, delivery, result) {
   }
 
   const deliveredAt = new Date().toISOString();
-  receipt.deliveries.push({
-    ...delivery,
-    kind: delivery?.kind ?? 'message',
-    message_id: result.messageId,
-    chat_id: result.chatId,
-    message_thread_id: result.topicId,
-    delivered_at: deliveredAt,
-  });
+  receipt.deliveries.push(buildEntry(deliveredAt));
   receipt.updated_at = deliveredAt;
 
   const temporaryPath = `${receiptPath}.tmp-${process.pid}-${Date.now()}`;
@@ -163,6 +155,31 @@ function writeTelegramReceipt(receiptPath, delivery, result) {
   } finally {
     fs.rmSync(temporaryPath, { force: true });
   }
+}
+
+function writeTelegramReceipt(receiptPath, delivery, result) {
+  if (!receiptPath) return;
+  appendTelegramReceiptEntry(receiptPath, (deliveredAt) => ({
+    ...delivery,
+    kind: delivery?.kind ?? 'message',
+    message_id: result.messageId,
+    chat_id: result.chatId,
+    message_thread_id: result.topicId,
+    delivered_at: deliveredAt,
+  }));
+}
+
+/**
+ * Record a release delivery step that sent no Telegram message, such as a
+ * summary skipped because the changelog was too large. It shares the atomic
+ * append of the message receipts and carries no message ID.
+ */
+export function recordTelegramReceiptEntry(receiptPath, entry) {
+  if (!receiptPath) return;
+  appendTelegramReceiptEntry(receiptPath, (deliveredAt) => ({
+    ...entry,
+    delivered_at: deliveredAt,
+  }));
 }
 
 function persistTelegramReceipt(receiptPath, delivery, result) {

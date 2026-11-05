@@ -128,10 +128,21 @@ export function getTelegramChangelogSummarySection(config) {
     );
   }
 
+  const maxSourceChars = s.max_source_chars;
+  if (
+    maxSourceChars !== undefined &&
+    (!Number.isSafeInteger(maxSourceChars) || maxSourceChars < 1000)
+  ) {
+    throw new Error(
+      'telegram.changelog_summary.max_source_chars must be an integer of at least 1000',
+    );
+  }
+
   return {
     enabled: true,
     provider,
     model,
+    ...(maxSourceChars === undefined ? {} : { max_source_chars: maxSourceChars }),
     max_chars:
       typeof maxChars === 'number' && maxChars >= 500 && maxChars <= 3500
         ? maxChars
