@@ -9,6 +9,22 @@ const MAX_CHANGELOG_INPUT_CHARS = 180_000;
 const SOURCE_BATCH_MAX_CHARS = 8_000;
 const MAX_PROCESS_OUTPUT_BYTES = 1_000_000;
 const TELEGRAM_MESSAGE_MAX_CHARS = 4096;
+
+/**
+ * The changelog is larger than `telegram.changelog_summary.max_source_chars`.
+ * Nothing was sent to Claude; callers send the document without a summary.
+ */
+export class ChangelogTooLargeError extends Error {
+  constructor({ sourceChars, limit }) {
+    super(
+      `Changelog is too large to summarize (${sourceChars} > ${limit} characters)`,
+    );
+    this.name = 'ChangelogTooLargeError';
+    this.code = 'changelog_too_large';
+    this.sourceChars = sourceChars;
+    this.limit = limit;
+  }
+}
 const DISALLOWED_PRESENTATION_CHARACTERS =
   '\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u0600-\\u0605\\u061C\\u06DD' +
   '\\u070F\\u0890-\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u2028-\\u202E' +
@@ -925,6 +941,17 @@ export async function generateChangelogSummary({
   if (!content.trim()) throw new Error('Changelog file is empty');
   // This path sends bounded source batches, never the entire cumulative log.
   // Keep the whole-input limit on the public single-prompt builder only.
+  // A configured max_source_chars bounds the number of Claude calls instead.
+  const maxSourceChars = summaryConfig.max_source_chars;
+  if (maxSourceChars !== undefined) {
+    const sourceChars = Array.from(content.trim()).length;
+    if (sourceChars > maxSourceChars) {
+      throw new ChangelogTooLargeError({
+        sourceChars,
+        limit: maxSourceChars,
+      });
+    }
+  }
   const sourceMetadata = annotateEligibleSourceIds(content);
   if (sourceMetadata.records.length === 0) {
     return formatTelegramSummaryMessages({

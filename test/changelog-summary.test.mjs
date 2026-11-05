@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  ChangelogTooLargeError,
   buildChangelogSummaryPrompt,
   buildClaudeArgs,
   buildPlainTextClaudeArgs,
@@ -1186,4 +1187,79 @@ test('Telegram summary rejects a completed message over the API limit', () => {
       }),
     /exceeds Telegram's 4096-character limit/,
   );
+});
+
+test('max_source_chars skips Claude for a larger changelog and allows exactly the limit', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-cap-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const changelogFile = path.join(directory, 'changelog.md');
+  const content = makeEligibleSectionWithAnnotatedLength({
+    targetChars: 3000,
+    sourceIndex: 1,
+    category: 'fix',
+  });
+  fs.writeFileSync(changelogFile, content);
+  const size = Array.from(content.trim()).length;
+
+  let calls = 0;
+  const runClaude = async (args) => {
+    calls += 1;
+    return { changes: args.expectedSourceIds.map((source_id) => ({
+      source_id,
+      module: 'Orders',
+      feature: 'Change',
+      summary: 'Corrected receipt preview alignment.',
+    })) };
+  };
+  const base = {
+    changelogFile,
+    appName: 'TunaiPro',
+    platform: 'ios',
+    version: '2.0.0+377',
+    runClaude,
+  };
+
+  await assert.rejects(
+    generateChangelogSummary({
+      ...base,
+      summaryConfig: { ...SUMMARY_CONFIG, max_source_chars: size - 1 },
+    }),
+    (error) =>
+      error instanceof ChangelogTooLargeError &&
+      error.code === 'changelog_too_large' &&
+      error.sourceChars === size &&
+      error.limit === size - 1,
+  );
+  assert.equal(calls, 0);
+
+  await generateChangelogSummary({
+    ...base,
+    summaryConfig: { ...SUMMARY_CONFIG, max_source_chars: size },
+  });
+  assert.equal(calls, 1);
+});
+
+test('max_source_chars is optional and must be an integer of at least 1000', () => {
+  const config = (value) => ({
+    telegram: {
+      changelog_summary: {
+        enabled: true,
+        ...(value === undefined ? {} : { max_source_chars: value }),
+      },
+    },
+  });
+  assert.equal(
+    'max_source_chars' in getTelegramChangelogSummarySection(config(undefined)),
+    false,
+  );
+  assert.equal(
+    getTelegramChangelogSummarySection(config(180000)).max_source_chars,
+    180000,
+  );
+  for (const invalid of [999, 1.5, '180000', null, -1]) {
+    assert.throws(
+      () => getTelegramChangelogSummarySection(config(invalid)),
+      /max_source_chars must be an integer of at least 1000/,
+    );
+  }
 });
