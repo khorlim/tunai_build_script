@@ -1,9 +1,15 @@
 import fs from 'fs';
+import os from 'os';
 import { Agent } from 'undici';
 import { spawnSync } from 'child_process';
 import path from 'path';
 
-const UPLOAD_URL = 'https://support.tunai.io/buildport/api/releases';
+// BUILDPORT_BASE_URL points the CLI at another BuildPort, for example a local
+// instance while testing BuildPort changes.
+export const BUILDPORT_BASE_URL = (
+  process.env.BUILDPORT_BASE_URL?.trim() || 'https://support.tunai.io/buildport'
+).replace(/\/+$/, '');
+const UPLOAD_URL = `${BUILDPORT_BASE_URL}/api/releases`;
 
 /**
  * @param {object} params
@@ -13,23 +19,24 @@ const UPLOAD_URL = 'https://support.tunai.io/buildport/api/releases';
  *   app_group?: string,
  *   release_version?: string,
  *   title?: string,
- *   notes?: string,
  * }} params.appInfo
  * @param {{
  *   api_token: string,
  *   app_group?: string,
+ *   track?: string,
  *   timeout_seconds: number,
  * }} params.buildport
- * @param {{ text: string, pr_number?: string, pr_url?: string }[]} [params.changes]
- *   Checklist entries shown on the tester page (usually one per PR).
- * @returns {Promise<string>} Tester share URL
+ * @param {string} [params.notes] Markdown release notes shown to testers.
+ * @returns {Promise<{ url: string, response: object }>} Tester URL for the
+ *   build's track, plus the parsed Buildport response (app_name, track,
+ *   release_version, notes, artifacts).
  */
 export async function uploadToBuildport({
   buildFilePath,
   version,
   appInfo,
   buildport,
-  changes,
+  notes,
 }) {
   const apiToken = buildport.api_token;
   if (!apiToken) {
@@ -46,18 +53,18 @@ export async function uploadToBuildport({
   const appGroup = buildport.app_group || appInfo.app_group;
   const releaseVersion = appInfo.release_version || version;
   const title = appInfo.title || appGroup || 'App';
-  const notes = appInfo.notes;
 
+  const track = buildport.track;
   if (appGroup) {
     form.append('app_group', appGroup);
+  }
+  if (track) {
+    form.append('track', track);
   }
   form.append('release_version', releaseVersion);
   form.append('title', title);
   if (notes != null && notes !== '') {
     form.append('notes', notes);
-  }
-  if (Array.isArray(changes) && changes.length > 0) {
-    form.append('changes', JSON.stringify(changes));
   }
 
   const fileBytes = fs.readFileSync(buildFilePath);
@@ -78,15 +85,25 @@ export async function uploadToBuildport({
       `title=${title}`,
     ];
     if (appGroup) curlArgs.push('-F', `app_group=${appGroup}`);
-    if (notes != null && notes !== '') curlArgs.push('-F', `notes=${notes}`);
-    if (Array.isArray(changes) && changes.length > 0) {
-      curlArgs.push('-F', `changes=${JSON.stringify(changes)}`);
+    if (track) curlArgs.push('-F', `track=${track}`);
+    // curl -F treats a value starting with @ or < as a file, so notes go
+    // through a temporary file read with <.
+    let notesFile = null;
+    if (notes != null && notes !== '') {
+      notesFile = path.join(os.tmpdir(), `buildport-notes-${process.pid}-${Date.now()}.md`);
+      fs.writeFileSync(notesFile, notes, { encoding: 'utf8', mode: 0o600 });
+      curlArgs.push('-F', `notes=<${notesFile}`);
     }
     curlArgs.push('-F', `apps=@${buildFilePath}`, UPLOAD_URL);
-    const r = spawnSync('curl', curlArgs, {
-      encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024,
-    });
+    let r;
+    try {
+      r = spawnSync('curl', curlArgs, {
+        encoding: 'utf8',
+        maxBuffer: 16 * 1024 * 1024,
+      });
+    } finally {
+      if (notesFile) fs.rmSync(notesFile, { force: true });
+    }
     if (r.status !== 0) {
       throw new Error(`curl upload failed: ${r.stderr?.trim() || r.status}`);
     }
@@ -130,7 +147,7 @@ export async function uploadToBuildport({
       );
     }
     console.log('File uploaded successfully (curl fallback)');
-    return curlUrl.trim();
+    return { url: curlUrl.trim(), response: json };
   }
 
   const bodyText = await uploadResponse.text();
@@ -163,5 +180,45 @@ export async function uploadToBuildport({
   }
 
   console.log('File uploaded successfully');
-  return url.trim();
+  return { url: url.trim(), response: json };
+}
+
+/**
+ * Replace the notes of an uploaded BuildPort build.
+ *
+ * @param {{ api_token: string, timeout_seconds?: number }} buildport
+ * @param {string} releaseToken  `token` from the upload response
+ * @param {string} notes  Markdown; an empty string clears the notes
+ * @returns {Promise<object>} Updated build, same shape as the upload response
+ */
+export async function updateBuildportNotes(buildport, releaseToken, notes) {
+  if (!buildport?.api_token) {
+    throw new Error(
+      'Missing buildport.api_token in tunai_build_script_config.json or BUILDPORT_API_TOKEN in the environment',
+    );
+  }
+  const token = String(releaseToken || '').trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(token)) {
+    throw new Error(`Invalid BuildPort build token: ${releaseToken}`);
+  }
+  const response = await fetch(`${UPLOAD_URL}/${token}/notes`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${buildport.api_token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ notes }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!response.ok) {
+    throw new Error(`BuildPort notes update failed: ${response.status} - ${json?.error || text.slice(0, 300)}`);
+  }
+  return json;
 }

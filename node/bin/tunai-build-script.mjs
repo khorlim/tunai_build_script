@@ -6,16 +6,14 @@ import { fileURLToPath } from 'url';
 import { findProjectWithConfig, CONFIG_FILENAME } from '../lib/find-project.mjs';
 import {
   loadConfigFile,
+  getBuildportSection,
   getPrepareReleaseSection,
-  getTelegramChangelogSummarySection,
   getTelegramSection,
 } from '../lib/config.mjs';
 import { detectPlatform } from '../lib/platform-detect.mjs';
-import { performBuild, performUpload, safeSummaryErrorDetails } from '../lib/build.mjs';
+import { performBuild, performUpload, resolveBuildportNotes } from '../lib/build.mjs';
+import { updateBuildportNotes } from '../lib/buildport-upload.mjs';
 import { sendTelegramMessage, sendTelegramDocument } from '../lib/telegram.mjs';
-import { getAppInfo } from '../lib/app-info.mjs';
-import { getVersion } from '../lib/pubspec.mjs';
-import { generateChangelogSummary } from '../lib/changelog-summary.mjs';
 import { bumpVersion } from '../lib/bump.mjs';
 import { runMacosTestflightScript } from '../lib/macos-testflight.mjs';
 import { runPrepareRelease } from '../lib/prepare-release.mjs';
@@ -28,11 +26,6 @@ import {
 
 const BUMP_TYPES = new Set(['major', 'minor', 'patch', 'build', 'manual']);
 
-function versionFromPrefixedTag(tag, prefix) {
-  const marker = `${prefix.trim()}-v`;
-  return tag.startsWith(marker) ? tag.slice(marker.length) : tag;
-}
-
 function usage() {
   console.log(`Usage: tunai-build-script [options]
 
@@ -43,7 +36,7 @@ function usage() {
 Options:
   --config <path>               Config JSON file (absolute or relative). Paths inside config are relative to
                                 --project-root or the discovered Flutter app root (pubspec.yaml).
-  --platform ios|android|macos   iOS/Android: build & upload (apphost/buildport/loadly/telegram_apk via config). macos: TestFlight script.
+  --platform ios|android|macos   iOS/Android: build & upload (buildport/loadly/telegram_apk via config). macos: TestFlight script.
   --bump-version <type> [ver]   major | minor | patch | build | manual (manual needs e.g. 1.2.3+5)
   --prepare-release <type> [ver]  Bump (always includes build #), changelog, commit, push, tag, push tag
   --test-release ios|android    One-liner testing build: channel switch (channel.test in config), build-number
@@ -56,6 +49,11 @@ Options:
   --upload                      Upload only (iOS/Android), no build
   --no-update                   Skip git pull, submodule update, flutter pub get (iOS/Android)
   --upload-changelog <path>     Relative path; overrides config upload.changelog_path
+  --notes <text>                BuildPort release notes (Markdown) for this build
+  --notes-file <path>           Read BuildPort release notes from a Markdown file (overrides --notes and
+                                buildport.notes_path)
+  --buildport-notes <token>     Replace the notes of an uploaded BuildPort build (token printed after upload);
+                                use with --notes or --notes-file. Does not build or upload.
   --build-only                  With --platform macos: archive/export only, no altool upload
   --repo-update                 With --platform macos: pod install --repo-update
   --yes                         With --bump-version: bump build number without prompting
@@ -65,7 +63,6 @@ Options:
   --telegram-receipt <path>     Absolute JSON path for atomically persisted Telegram message IDs
   --test-telegram               Send a test Telegram message (needs config + telegram.*)
   --test-upload-file <path>     Send a file via Telegram (path relative to project root)
-  --test-changelog-summary <path>  Summarize a changelog with Claude and send it to Telegram
   -h, -help, --help             Show this help
 
 Changelog (must be the first argument; needs git on PATH):
@@ -97,7 +94,8 @@ Examples:
   tunai-build-script --release-candidate ios --dry-run
   tunai-build-script --upload --platform android
   tunai-build-script --upload-changelog CHANGELOG.md
-  tunai-build-script --test-changelog-summary changelog_tester.md --platform ios
+  tunai-build-script --platform ios --notes-file release_notes.md
+  tunai-build-script --buildport-notes Ab12Cd34Ef56Gh78Ij --notes-file release_notes.md
   tunai-build-script --platform macos --build-only
   tunai-build-script --bump-version patch
   tunai-build-script --bump-version manual 1.2.3+5 --project-root /path/to/app
@@ -152,11 +150,13 @@ function parseArgs(argv) {
     uploadOnly: false,
     noUpdate: false,
     uploadChangelog: null,
+    notesText: null,
+    notesFile: null,
+    buildportNotesToken: null,
     topicId: null,
     telegramReceipt: null,
     testTelegram: false,
     testUploadFile: null,
-    testChangelogSummary: null,
     testReleasePlatform: null,
     releaseCandidatePlatform: null,
     dryRun: false,
@@ -264,6 +264,25 @@ function parseArgs(argv) {
     } else if (a === '--upload') out.uploadOnly = true;
     else if (a === '--no-update') out.noUpdate = true;
     else if (a === '--upload-changelog') out.uploadChangelog = argv[++i];
+    else if (a === '--notes') {
+      out.notesText = argv[++i];
+      if (out.notesText === undefined) {
+        console.error('Error: --notes requires text');
+        process.exit(1);
+      }
+    } else if (a === '--notes-file') {
+      out.notesFile = argv[++i];
+      if (!out.notesFile || out.notesFile.startsWith('-')) {
+        console.error('Error: --notes-file requires a file path');
+        process.exit(1);
+      }
+    } else if (a === '--buildport-notes') {
+      out.buildportNotesToken = argv[++i];
+      if (!out.buildportNotesToken || out.buildportNotesToken.startsWith('-')) {
+        console.error('Error: --buildport-notes requires the BuildPort build token');
+        process.exit(1);
+      }
+    }
     else if (a === '--topic-id') out.topicId = argv[++i];
     else if (a === '--telegram-receipt') {
       out.telegramReceipt = argv[++i];
@@ -278,16 +297,6 @@ function parseArgs(argv) {
     }
     else if (a === '--test-telegram') out.testTelegram = true;
     else if (a === '--test-upload-file') out.testUploadFile = argv[++i];
-    else if (a === '--test-changelog-summary') {
-      out.testChangelogSummary = argv[++i];
-      if (
-        !out.testChangelogSummary ||
-        out.testChangelogSummary.startsWith('-')
-      ) {
-        console.error('Error: --test-changelog-summary requires a file path');
-        process.exit(1);
-      }
-    }
     else if (a === '--build-only') out.macosBuildOnly = true;
     else if (a === '--repo-update') out.macosRepoUpdate = true;
     else if (a === '--yes') out.bumpYes = true;
@@ -453,7 +462,6 @@ function validateNoMix(args, mode) {
       ['noUpdate', 'Error: --release-candidate already builds without git pull/pub get'],
       ['testTelegram', 'Error: do not combine --release-candidate with Telegram test flags'],
       ['testUploadFile', 'Error: do not combine --release-candidate with Telegram test flags'],
-      ['testChangelogSummary', 'Error: do not combine --release-candidate with Telegram test flags'],
       ['macosBuildOnly', 'Error: --build-only / --repo-update are only for --platform macos'],
       ['macosRepoUpdate', 'Error: --build-only / --repo-update are only for --platform macos'],
     ];
@@ -475,10 +483,6 @@ function validateNoMix(args, mode) {
       [
         'testUploadFile',
         'Error: do not combine --prepare-release with --test-telegram / --test-upload-file',
-      ],
-      [
-        'testChangelogSummary',
-        'Error: do not combine --prepare-release with Telegram test flags',
       ],
       [
         'macosBuildOnly',
@@ -512,8 +516,7 @@ function validateNoMix(args, mode) {
     }
     if (
       args.testTelegram ||
-      args.testUploadFile ||
-      args.testChangelogSummary
+      args.testUploadFile
     ) {
       console.error(
         'Error: do not combine --bump-version with --test-telegram / --test-upload-file',
@@ -551,8 +554,7 @@ function validateNoMix(args, mode) {
     }
     if (
       args.testTelegram ||
-      args.testUploadFile ||
-      args.testChangelogSummary
+      args.testUploadFile
     ) {
       console.error(
         'Error: do not combine --platform macos with Telegram test flags',
@@ -627,10 +629,6 @@ async function main() {
       cumulativeChangelog = {
         ...candidate.cumulativeChangelog,
         fromRev,
-        previousVersion: versionFromPrefixedTag(
-          fromRev,
-          candidate.cumulativeChangelog.fromTagPrefix,
-        ),
       };
     }
 
@@ -670,7 +668,7 @@ async function main() {
       );
       if (cumulativeChangelog) {
         console.log(
-          '  4. send the cumulative AI summary and changelog to its configured Telegram topic',
+          '  4. send the cumulative changelog to its configured Telegram topic',
         );
       }
       return;
@@ -712,16 +710,14 @@ async function main() {
       changelogRelativePath: changelogEffective,
       topicIdOverride:
         args.topicId || process.env.TELEGRAM_TOPIC_ID || undefined,
-      previousVersion: release.previousVersion,
       telegramReceiptPath: args.telegramReceipt,
+      notes: { text: args.notesText, file: args.notesFile },
       additionalChangelogDeliveries: cumulativeChangelog
         ? [
             {
               changelogRelativePath: cumulativeChangelog.outputPath,
               telegram: cumulativeChangelog.telegram,
-              previousVersion: cumulativeChangelog.previousVersion,
               label: 'cumulative changelog',
-              summaryTitle: 'Full Release Summary',
               documentTitle: 'Full changelog since production',
               receiptPrefix: 'cumulative',
             },
@@ -829,8 +825,8 @@ async function main() {
       changelogRelativePath: changelogEffective,
       topicIdOverride:
         args.topicId || process.env.TELEGRAM_TOPIC_ID || undefined,
-      previousVersion: release.previousVersion,
       telegramReceiptPath: args.telegramReceipt,
+      notes: { text: args.notesText, file: args.notesFile },
     });
     return;
   }
@@ -957,78 +953,28 @@ async function main() {
     return;
   }
 
-  if (args.testChangelogSummary) {
-    const telegram = getTelegramSection(config);
-    const summaryConfig = getTelegramChangelogSummarySection(config);
-    if (!telegram) {
+  if (args.buildportNotesToken) {
+    const buildport = getBuildportSection(config);
+    if (!buildport) {
       console.error(
-        'Error: Configure telegram.bot_token and telegram.chat_id in tunai_build_script_config.json',
+        'Error: --buildport-notes needs buildport.api_token in the config or BUILDPORT_API_TOKEN',
       );
       process.exit(1);
     }
-    if (!summaryConfig) {
-      console.error(
-        'Error: Set telegram.changelog_summary.enabled to true in tunai_build_script_config.json',
-      );
+    if (args.notesFile === null && args.notesText === null) {
+      console.error('Error: --buildport-notes needs --notes or --notes-file (use --notes "" to clear)');
       process.exit(1);
     }
-
-    const changelogFile = path.isAbsolute(args.testChangelogSummary)
-      ? args.testChangelogSummary
-      : path.join(projectRoot, args.testChangelogSummary);
-    if (!fs.existsSync(changelogFile)) {
-      console.error(`Error: File not found: ${changelogFile}`);
-      process.exit(1);
-    }
-
-    const platform = args.platform || detectPlatform(projectRoot);
-    if (platform !== 'ios' && platform !== 'android') {
-      console.error(
-        'Error: Specify --platform ios or --platform android for the changelog summary',
-      );
-      process.exit(1);
-    }
-    const appInfo = getAppInfo(projectRoot, platform);
-    const appName = appInfo.app_group || appInfo.name || 'App';
-    const version = getVersion(projectRoot) || 'unknown';
-    let stage = 'generation';
-    try {
-      console.log('Generating Telegram changelog summary with Claude...');
-      const generated = await generateChangelogSummary({
-        changelogFile,
-        appName,
-        platform,
-        version,
-        summaryConfig,
-      });
-      const messages = Array.isArray(generated) ? generated : [generated];
-      let allSent = true;
-      for (const [index, text] of messages.entries()) {
-        stage = `summary part ${index + 1} send`;
-        const sent = await sendTelegramMessage({
-          botToken: telegram.bot_token,
-          chatId: telegram.chat_id,
-          topicId: topicOverride || telegram.topic_id,
-          text,
-          receiptPath: args.telegramReceipt,
-          receipt: {
-            delivery: 'changelog_summary_test',
-            part: index + 1,
-            total_parts: messages.length,
-            version,
-          },
-        });
-        if (!sent) allSent = false;
-      }
-      if (!allSent) {
-        throw new Error('Telegram rejected the AI changelog summary');
-      }
-      console.log('AI changelog summary test completed. Check Telegram.');
-      return;
-    } catch (error) {
-      console.error(`AI changelog summary test failed (stage=${stage} error=${safeSummaryErrorDetails(error)})`);
-      process.exit(1);
-    }
+    const notes = resolveBuildportNotes({
+      projectRoot,
+      notes: { text: args.notesText, file: args.notesFile },
+    });
+    const updated = await updateBuildportNotes(buildport, args.buildportNotesToken, notes);
+    console.log(
+      `BuildPort notes ${notes ? 'updated' : 'cleared'} for ${updated?.app_name ?? 'build'} ${updated?.release_version ?? ''}`.trim(),
+    );
+    if (updated?.url) console.log(updated.url);
+    return;
   }
 
   let platform = args.platform;
@@ -1046,6 +992,7 @@ async function main() {
     process.exit(1);
   }
   console.log(`Using platform: ${platform}`);
+  const notesInput = { text: args.notesText, file: args.notesFile };
 
   const changelogEffective =
     args.uploadChangelog ||
@@ -1060,6 +1007,7 @@ async function main() {
       changelogRelativePath: changelogEffective,
       topicIdOverride: topicOverride,
       telegramReceiptPath: args.telegramReceipt,
+      notes: notesInput,
     });
     return;
   }
@@ -1072,6 +1020,7 @@ async function main() {
     changelogRelativePath: changelogEffective,
     topicIdOverride: topicOverride,
     telegramReceiptPath: args.telegramReceipt,
+    notes: notesInput,
   });
 }
 

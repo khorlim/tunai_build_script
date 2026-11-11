@@ -1,10 +1,10 @@
 {
   "upload": {
     "providers": {
-      "ios": "apphost",
+      "ios": "buildport",
       "android": "telegram_apk"
     },
-    "provider": "apphost",
+    "provider": "buildport",
     "changelog_path": null
   },
   "prepare_release": {
@@ -46,25 +46,10 @@
     "app_group": "",
     "timeout_seconds": 600
   },
-  "apphost": {
-    "user_id": "your_user_id",
-    "app_id": "your_app_id",
-    "key": "your_key",
-    "ios_bundle_identifier": "com.example.app",
-    "android_package_name": "com.example.app"
-  },
   "telegram": {
     "bot_token": "${TELEGRAM_BOT_TOKEN}",
     "chat_id": "${TELEGRAM_CHAT_ID}",
-    "topic_id": "",
-    "changelog_summary": {
-      "enabled": false,
-      "provider": "claude_cli",
-      "model": "haiku",
-      "max_chars": 3000,
-      "timeout_seconds": 60,
-      "failure_mode": "warn"
-    }
+    "topic_id": ""
   },
   "ios": {
     "export_options_plist": "ios/ExportOptions.plist"

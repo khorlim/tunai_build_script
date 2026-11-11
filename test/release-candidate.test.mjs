@@ -65,7 +65,7 @@ function makeTempProject() {
 
 function candidateConfig() {
   return {
-    upload: { provider: 'apphost' },
+    upload: { provider: 'buildport' },
     buildport: {
       api_token: 'test-token',
       app_group: 'Example',
@@ -169,14 +169,6 @@ test('release candidate validates a cumulative production changelog destination'
     bot_token: 'test-bot-token',
     chat_id: '-1001',
     topic_id: '20',
-    changelog_summary: {
-      enabled: true,
-      provider: 'claude_cli',
-      model: 'haiku',
-      max_chars: 3000,
-      timeout_seconds: 240,
-      failure_mode: 'warn',
-    },
   };
   config.release_candidate.cumulative_changelog = {
     from_tag_prefix: 'example-prod',
@@ -205,7 +197,7 @@ test('release candidate validates a cumulative production changelog destination'
   });
 });
 
-test('cumulative changelog rejects unsafe paths and missing summaries', (t) => {
+test('cumulative changelog rejects unsafe paths', (t) => {
   const projectRoot = makeTempProject();
   t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
   const config = candidateConfig();
@@ -233,18 +225,6 @@ test('cumulative changelog rejects unsafe paths and missing summaries', (t) => {
     /project-relative Markdown path/,
   );
 
-  config.release_candidate.cumulative_changelog.path =
-    'changelog_tester_since_prod.md';
-  assert.throws(
-    () =>
-      prepareReleaseCandidate({
-        projectRoot,
-        config,
-        platform: 'ios',
-        writeFiles: false,
-      }),
-    /changelog_summary.enabled=true/,
-  );
 });
 
 test('prepare release commits the cumulative tester changelog', async (t) => {

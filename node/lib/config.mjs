@@ -36,11 +36,6 @@ export function loadConfigFile(configPath) {
 }
 
 /** @param {ReturnType<typeof loadConfigFile>} config */
-export function getApphostSection(config) {
-  return config?.apphost ?? null;
-}
-
-/** @param {ReturnType<typeof loadConfigFile>} config */
 export function getLoadlySection(config) {
   const l = config?.loadly;
   if (!l || typeof l !== 'object') return null;
@@ -84,10 +79,14 @@ export function getBuildportSection(config) {
       typeof b?.app_group === 'string' && b.app_group.trim()
         ? b.app_group.trim()
         : undefined,
+    track:
+      typeof b?.track === 'string' && b.track.trim()
+        ? b.track.trim()
+        : undefined,
     timeout_seconds: timeoutSeconds,
-    changes_path:
-      typeof b?.changes_path === 'string' && b.changes_path.trim()
-        ? b.changes_path.trim()
+    notes_path:
+      typeof b?.notes_path === 'string' && b.notes_path.trim()
+        ? b.notes_path.trim()
         : undefined,
   };
 }
@@ -103,46 +102,6 @@ export function getTelegramSection(config) {
     bot_token: botToken,
     chat_id: chatId,
     topic_id: t.topic_id?.trim() || undefined,
-  };
-}
-
-/** @param {ReturnType<typeof loadConfigFile>} config */
-export function getTelegramChangelogSummarySection(config) {
-  const s = config?.telegram?.changelog_summary;
-  if (!s || typeof s !== 'object' || s.enabled !== true) return null;
-
-  const provider = s.provider?.trim() || 'claude_cli';
-  if (provider !== 'claude_cli') {
-    throw new Error(
-      'telegram.changelog_summary.provider must be "claude_cli"',
-    );
-  }
-
-  const model = s.model?.trim() || 'haiku';
-  const maxChars = s.max_chars;
-  const timeoutSeconds = s.timeout_seconds;
-  const failureMode = s.failure_mode?.trim() || 'warn';
-  if (failureMode !== 'warn') {
-    throw new Error(
-      'telegram.changelog_summary.failure_mode must be "warn"',
-    );
-  }
-
-  return {
-    enabled: true,
-    provider,
-    model,
-    max_chars:
-      typeof maxChars === 'number' && maxChars >= 500 && maxChars <= 3500
-        ? maxChars
-        : 3000,
-    timeout_seconds:
-      typeof timeoutSeconds === 'number' &&
-      timeoutSeconds >= 10 &&
-      timeoutSeconds <= 300
-        ? timeoutSeconds
-        : 60,
-    failure_mode: failureMode,
   };
 }
 

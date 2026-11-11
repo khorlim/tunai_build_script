@@ -43,10 +43,10 @@ test('Telegram sends return message IDs and atomically accumulate delivery recei
     botToken: 'test-token',
     chatId: '-1001',
     topicId: '77',
-    text: 'summary',
+    text: 'Build ready',
     receiptPath,
     receipt: {
-      delivery: 'incremental_summary',
+      delivery: 'build_upload_notification',
       part: 1,
       total_parts: 1,
       version: '1.0.189+327',
@@ -84,7 +84,7 @@ test('Telegram sends return message IDs and atomically accumulate delivery recei
     })),
     [
       {
-        delivery: 'incremental_summary',
+        delivery: 'build_upload_notification',
         kind: 'message',
         message_id: 17910,
         chat_id: '-1001',
@@ -126,9 +126,9 @@ test('Telegram success without a message ID is rejected before a receipt is clai
     sendTelegramMessage({
       botToken: 'test-token',
       chatId: '-1001',
-      text: 'summary',
+      text: 'Build ready',
       receiptPath,
-      receipt: { delivery: 'incremental_summary' },
+      receipt: { delivery: 'build_upload_notification' },
     }),
     /without returning a valid result\.message_id/,
   );

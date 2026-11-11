@@ -22,11 +22,6 @@ function decodeXmlEntities(value) {
     .replaceAll('&amp;', '&');
 }
 
-function getPubspecDescription(content) {
-  const m = content.match(/^\s*description:\s*(.+)$/m);
-  return m ? cleanInfoValue(m[1].replace(/^['"]|['"]$/g, '')) : null;
-}
-
 function readAndroidStringResource(projectRoot, resourceName) {
   const valuesDir = path.join(
     projectRoot,
@@ -94,7 +89,6 @@ export function getAppInfo(projectRoot, platform) {
   const content = pubspec?.content ?? '';
   const pubspecName = content ? getNameFromPubspecContent(content) : null;
   const version = content ? getVersionFromPubspecContent(content) : null;
-  const description = content ? getPubspecDescription(content) : null;
   const displayName =
     platform === 'android'
       ? getAndroidDisplayName(projectRoot)
@@ -109,6 +103,5 @@ export function getAppInfo(projectRoot, platform) {
     app_group: pubspecName || appName,
     release_version: version,
     title: `${appName} ${version ?? ''}`.trim(),
-    notes: description || undefined,
   };
 }

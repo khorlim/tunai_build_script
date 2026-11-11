@@ -142,7 +142,7 @@ for (const kind of ['message', 'document']) {
       return accepted(6015);
     };
     t.after(() => { globalThis.fetch = originalFetch; });
-    const options = { botToken: 'test-token', chatId: '-1001', text: 'summary',
+    const options = { botToken: 'test-token', chatId: '-1001', text: 'Build ready',
       filePath, receiptPath, receipt: { delivery: kind } };
     const result = await (kind === 'message' ? sendTelegramMessage : sendTelegramDocument)(options);
     assert.equal(result.messageId, 6015);
@@ -162,7 +162,7 @@ test('combined connection failures stop after three attempts without a receipt',
     throw aggregateFailure([connectError('ETIMEDOUT'), connectError('EHOSTUNREACH')]);
   };
   t.after(() => { globalThis.fetch = originalFetch; });
-  await assert.rejects(sendTelegramMessage({ botToken: 'test-token', chatId: '-1001', text: 'summary', receiptPath }));
+  await assert.rejects(sendTelegramMessage({ botToken: 'test-token', chatId: '-1001', text: 'Build ready', receiptPath }));
   assert.equal(calls, 3);
   assert.equal(fs.existsSync(receiptPath), false);
 });
@@ -179,7 +179,7 @@ for (const [name, failure] of [
     let calls = 0;
     globalThis.fetch = async () => { calls++; throw failure; };
     t.after(() => { globalThis.fetch = originalFetch; });
-    await assert.rejects(sendTelegramMessage({ botToken: 'test-token', chatId: '-1001', text: 'summary' }), e => e === failure);
+    await assert.rejects(sendTelegramMessage({ botToken: 'test-token', chatId: '-1001', text: 'Build ready' }), e => e === failure);
     assert.equal(calls, 1);
   });
 }
@@ -199,7 +199,7 @@ test('temporary DNS failure retries message and persists one receipt after ackno
 
   const result = await sendTelegramMessage({
     botToken: 'test-token', chatId: '-1001', text: 'part 2', receiptPath,
-    receipt: { delivery: 'cumulative_summary', part: 2 },
+    receipt: { delivery: 'cumulative_document', part: 2 },
   });
   assert.equal(calls, 2);
   assert.equal(result.messageId, 42);
@@ -272,7 +272,7 @@ test('pre-connect timeout retries document and records its acknowledgement once'
   t.after(() => { globalThis.fetch = originalFetch; });
   const result = await sendTelegramDocument({
     botToken: 'test-token', chatId: '-1001', filePath, receiptPath,
-    receipt: { delivery: 'cumulative_document' },
+    receipt: { delivery: 'cumulative_document', part: 2 },
   });
   assert.equal(calls, 2);
   assert.equal(result.messageId, 43);

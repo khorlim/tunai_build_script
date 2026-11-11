@@ -4,7 +4,6 @@ import { spawnSync } from 'child_process';
 import { archiveSigningFromExportOptions } from './ios-archive-signing.mjs';
 import {
   getBuildportSection,
-  getTelegramChangelogSummarySection,
   getTelegramSection,
 } from './config.mjs';
 
@@ -140,11 +139,6 @@ function parseCumulativeChangelogConfig(config, releaseCandidate) {
   if (!primaryTelegram) {
     throw new Error(
       'release_candidate.cumulative_changelog requires telegram.bot_token and the primary telegram destination',
-    );
-  }
-  if (!getTelegramChangelogSummarySection(config)) {
-    throw new Error(
-      'release_candidate.cumulative_changelog requires telegram.changelog_summary.enabled=true',
     );
   }
 

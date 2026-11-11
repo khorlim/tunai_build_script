@@ -5,19 +5,15 @@ import { runInherit } from './run.mjs';
 import { withIosArchiveSigning } from './ios-archive-signing.mjs';
 import { getVersion } from './pubspec.mjs';
 import {
-  getApphostSection,
   getBuildportSection,
   getLoadlySection,
-  getTelegramChangelogSummarySection,
   getTelegramSection,
 } from './config.mjs';
 import { findAndroidBuildFile, findIpaFile } from './artifacts.mjs';
-import { uploadToApphost } from './apphost-upload.mjs';
-import { collectBuildportChanges } from './buildport-changes.mjs';
 import { uploadToBuildport } from './buildport-upload.mjs';
 import { uploadToLoadly } from './loadly-upload.mjs';
 import { sendTelegramDocument, sendTelegramMessage } from './telegram.mjs';
-import { generateChangelogSummary } from './changelog-summary.mjs';
+import { formatBuildportUploadMessage } from './buildport-telegram.mjs';
 
 function resolvePath(projectRoot, rel) {
   if (!rel) return null;
@@ -61,8 +57,8 @@ function safeErrorName(error) {
 }
 
 // Never stringify an exception: messages, stacks and arbitrary codes can contain
-// the bot URL, token, or summary payload. Bound both nodes and array fanout.
-export function safeSummaryErrorDetails(error) {
+// the bot URL, token, or message payload. Bound both nodes and array fanout.
+export function safeErrorDetails(error) {
   const details = [];
   const seen = new Set();
   const pending = [error];
@@ -97,22 +93,39 @@ export function safeSummaryErrorDetails(error) {
   return JSON.stringify(details);
 }
 
+/**
+ * Release notes for BuildPort, in priority order: --notes-file, --notes,
+ * then buildport.notes_path from the config. --notes-file is relative to the
+ * current directory like any CLI path; notes_path is relative to the project
+ * root. A missing --notes-file is an error; a missing configured notes_path
+ * only warns, so routine builds are not blocked.
+ */
+export function resolveBuildportNotes({ projectRoot, notes, buildport }) {
+  if (notes?.file) {
+    const file = path.resolve(notes.file);
+    if (!fs.existsSync(file)) throw new Error(`Notes file not found: ${file}`);
+    return fs.readFileSync(file, 'utf8').trim();
+  }
+  if (typeof notes?.text === 'string' && notes.text.trim()) return notes.text.trim();
+  if (buildport?.notes_path) {
+    const file = resolvePath(projectRoot, buildport.notes_path);
+    if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8').trim();
+    console.warn(`Warning: buildport.notes_path not found: ${file}; uploading without notes`);
+  }
+  return '';
+}
+
 export async function deliverTelegramChangelog({
   projectRoot,
   changelogRelativePath,
   telegram,
-  summaryConfig,
   appName,
   platform,
   version,
-  previousVersion,
   label = 'changelog',
-  summaryTitle = 'Release Summary',
   documentTitle = 'Changelog',
   receiptPath,
   receiptPrefix = 'incremental',
-  generateSummaryImpl = generateChangelogSummary,
-  sendMessageImpl = sendTelegramMessage,
   sendDocumentImpl = sendTelegramDocument,
 }) {
   const changelogFile = resolvePath(projectRoot, changelogRelativePath);
@@ -123,66 +136,7 @@ export async function deliverTelegramChangelog({
     return false;
   }
 
-  if (summaryConfig) {
-    let stage = 'generation';
-    try {
-      console.log(`Generating Telegram ${label} summary with Claude...`);
-      const generated = await generateSummaryImpl({
-        changelogFile,
-        appName,
-        platform,
-        version,
-        previousVersion,
-        summaryConfig,
-        title: summaryTitle,
-      });
-      const messages = Array.isArray(generated) ? generated : [generated];
-      let allSent = true;
-      let firstFailedStage;
-      for (const [index, text] of messages.entries()) {
-        stage = `summary part ${index + 1} send`;
-        const sent = await sendMessageImpl({
-          botToken: telegram.bot_token,
-          chatId: telegram.chat_id,
-          topicId: telegram.topic_id,
-          text,
-          receiptPath,
-          receipt: {
-            delivery: `${receiptPrefix}_summary`,
-            part: index + 1,
-            total_parts: messages.length,
-            version,
-          },
-        });
-        if (!sent) {
-          allSent = false;
-          firstFailedStage ??= stage;
-        }
-      }
-      if (!allSent) {
-        stage = firstFailedStage;
-        if (receiptPath) {
-          throw new Error(`Telegram rejected the AI ${label} summary`);
-        }
-        console.warn(
-          `Warning: AI ${label} summary was not delivered; continuing with the ${label} document.`,
-        );
-      }
-    } catch (error) {
-      const diagnostic = `stage=${stage} error=${safeSummaryErrorDetails(error)}`;
-      if (receiptPath) {
-        console.warn(`AI ${label} summary delivery failed (${diagnostic})`);
-        throw new Error(`AI ${label} summary delivery failed (${diagnostic})`);
-      }
-      console.warn(
-        `Warning: AI ${label} summary failed (${diagnostic}); continuing with the ${label} document.`,
-      );
-    }
-  }
-
-  const uploadLabel =
-    label === 'changelog' ? 'changelog' : `${label}`;
-  console.log(`Uploading ${uploadLabel} file: ${changelogFile}`);
+  console.log(`Uploading ${label} file: ${changelogFile}`);
   let document;
   try {
     document = await sendDocumentImpl({
@@ -200,7 +154,7 @@ export async function deliverTelegramChangelog({
       },
     });
   } catch (error) {
-    throw new Error(`Telegram ${label} document send failed (error=${safeSummaryErrorDetails(error)})`);
+    throw new Error(`Telegram ${label} document send failed (error=${safeErrorDetails(error)})`);
   }
   if (receiptPath && !document) {
     throw new Error(`Telegram rejected the ${label} document`);
@@ -214,7 +168,7 @@ function resolveUploadProvider(config, platform) {
     providers && typeof providers === 'object'
       ? providers[platform]
       : undefined;
-  const raw = byPlatform ?? config?.upload?.provider ?? 'apphost';
+  const raw = byPlatform ?? config?.upload?.provider ?? 'buildport';
   return String(raw).toLowerCase();
 }
 
@@ -265,7 +219,7 @@ export async function performUpload({
   changelogRelativePath,
   topicIdOverride,
   buildFilePath,
-  previousVersion,
+  notes,
   additionalChangelogDeliveries = [],
   telegramReceiptPath,
 }) {
@@ -279,13 +233,12 @@ export async function performUpload({
 
   const provider = resolveUploadProvider(config, platform);
   if (
-    provider !== 'apphost' &&
     provider !== 'buildport' &&
     provider !== 'loadly' &&
     provider !== 'telegram_apk'
   ) {
     console.error(
-      `Error: upload provider must be "apphost", "buildport", "loadly", or "telegram_apk", got "${provider}"`,
+      `Error: upload provider must be "buildport", "loadly", or "telegram_apk", got "${provider}"`,
     );
     process.exit(1);
   }
@@ -362,6 +315,7 @@ export async function performUpload({
     console.log('Telegram APK delivery completed successfully!');
   } else {
     let installUrl;
+    let buildportUpload = null;
     if (provider === 'buildport') {
       const buildport = getBuildportSection(config);
       if (!buildport) {
@@ -370,23 +324,26 @@ export async function performUpload({
         );
         process.exit(1);
       }
-      const changes = await collectBuildportChanges({
-        projectRoot,
-        changesPath: buildport.changes_path,
-        warn: (msg) => console.warn(`Warning: ${msg}`),
-      });
-      if (changes.length) {
-        console.log(
-          `Sending ${changes.length} change${changes.length === 1 ? '' : 's'} from the tester changelog to Buildport`,
-        );
-      }
-      installUrl = await uploadToBuildport({
+      const releaseNotes = resolveBuildportNotes({ projectRoot, notes, buildport });
+      console.log(
+        releaseNotes
+          ? `Sending ${releaseNotes.length} characters of release notes to BuildPort`
+          : 'No release notes for this build (add them later with --buildport-notes <token>)',
+      );
+      buildportUpload = await uploadToBuildport({
         buildFilePath: resolvedBuildFilePath,
         version,
         appInfo,
         buildport,
-        changes,
+        notes: releaseNotes,
       });
+      installUrl = buildportUpload.url;
+      if (buildportUpload.response?.token) {
+        console.log(`BuildPort build token: ${buildportUpload.response.token}`);
+        console.log(
+          `Update its notes later: tunai-build-script --buildport-notes ${buildportUpload.response.token} --notes-file <file>`,
+        );
+      }
     } else if (provider === 'loadly') {
       const loadly = getLoadlySection(config);
       if (!loadly) {
@@ -398,45 +355,6 @@ export async function performUpload({
       installUrl = await uploadToLoadly({
         buildFilePath: resolvedBuildFilePath,
         loadly,
-      });
-    } else {
-      const apphost = getApphostSection(config);
-      if (!apphost) {
-        console.error(
-          'Error: Missing "apphost" in tunai_build_script_config.json',
-        );
-        process.exit(1);
-      }
-
-      let bundleIdentifier;
-      if (platform === 'ios') {
-        bundleIdentifier = apphost.ios_bundle_identifier;
-        if (!bundleIdentifier) {
-          console.error(
-            'Error: apphost.ios_bundle_identifier missing in tunai_build_script_config.json',
-          );
-          process.exit(1);
-        }
-      } else {
-        bundleIdentifier = apphost.android_package_name;
-        if (!bundleIdentifier) {
-          console.error(
-            'Error: apphost.android_package_name missing in tunai_build_script_config.json',
-          );
-          process.exit(1);
-        }
-      }
-
-      installUrl = await uploadToApphost({
-        platform,
-        buildFilePath: resolvedBuildFilePath,
-        version,
-        bundleIdentifier,
-        apphost: {
-          user_id: String(apphost.user_id ?? ''),
-          app_id: String(apphost.app_id ?? ''),
-          key: String(apphost.key ?? ''),
-        },
       });
     }
 
@@ -452,8 +370,14 @@ export async function performUpload({
           botToken: telegram.bot_token,
           chatId: telegram.chat_id,
           topicId,
-          text:
-            `✅ <b>Build & Upload Completed Successfully</b>\n\n` +
+          text: buildportUpload
+            ? formatBuildportUploadMessage({
+                platform,
+                version,
+                fallbackAppName: appName,
+                upload: buildportUpload,
+              })
+            : `✅ <b>Build & Upload Completed Successfully</b>\n\n` +
             `App: ${appName}\n` +
             `Platform: ${platform}\n` +
             `Version: ${version}\n\n` +
@@ -470,7 +394,7 @@ export async function performUpload({
           // Never retain or print the original error: its cause may include the
           // token-bearing request URL or payload. The POST outcome is unknown.
           throw new Error(
-            `Telegram build upload notification transport failed; delivery outcome unknown: ${safeSummaryErrorDetails(error)}`,
+            `Telegram build upload notification transport failed; delivery outcome unknown: ${safeErrorDetails(error)}`,
           );
         }
         throw error;
@@ -493,30 +417,24 @@ export async function performUpload({
         ...telegram,
         topic_id: topicId,
       },
-      summaryConfig: getTelegramChangelogSummarySection(config),
       appName,
       platform,
       version,
-      previousVersion,
       receiptPath: telegramReceiptPath,
       receiptPrefix: 'incremental',
     });
   }
 
   if (additionalChangelogDeliveries.length) {
-    const summaryConfig = getTelegramChangelogSummarySection(config);
     for (const delivery of additionalChangelogDeliveries) {
       await deliverTelegramChangelog({
         projectRoot,
         changelogRelativePath: delivery.changelogRelativePath,
         telegram: delivery.telegram,
-        summaryConfig,
         appName,
         platform,
         version,
-        previousVersion: delivery.previousVersion,
         label: delivery.label ?? 'additional changelog',
-        summaryTitle: delivery.summaryTitle ?? 'Release Summary',
         documentTitle: delivery.documentTitle ?? 'Changelog',
         receiptPath: telegramReceiptPath,
         receiptPrefix: delivery.receiptPrefix ?? 'additional',
@@ -570,7 +488,7 @@ export async function performBuild({
   topicIdOverride,
   validateBuildArtifact,
   iosArchiveSigning,
-  previousVersion,
+  notes,
   additionalChangelogDeliveries,
   telegramReceiptPath,
   performUploadImpl = performUpload,
@@ -646,7 +564,7 @@ export async function performBuild({
       changelogRelativePath,
       topicIdOverride,
       buildFilePath: artifact.path,
-      previousVersion,
+      notes,
       additionalChangelogDeliveries,
       telegramReceiptPath,
     });
