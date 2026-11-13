@@ -427,6 +427,8 @@ export async function performUpload({
 
   if (additionalChangelogDeliveries.length) {
     for (const delivery of additionalChangelogDeliveries) {
+      // No destination configured: the document is written, not sent.
+      if (!delivery.telegram) continue;
       await deliverTelegramChangelog({
         projectRoot,
         changelogRelativePath: delivery.changelogRelativePath,
