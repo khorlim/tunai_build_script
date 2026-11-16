@@ -11,6 +11,7 @@ import {
 } from './config.mjs';
 import { findAndroidBuildFile, findIpaFile } from './artifacts.mjs';
 import { uploadToBuildport } from './buildport-upload.mjs';
+import { checkBuildNumber } from './buildport-check.mjs';
 import { uploadToLoadly } from './loadly-upload.mjs';
 import { sendTelegramDocument, sendTelegramMessage } from './telegram.mjs';
 import { formatBuildportUploadMessage } from './buildport-telegram.mjs';
@@ -494,6 +495,7 @@ export async function performBuild({
   additionalChangelogDeliveries,
   telegramReceiptPath,
   performUploadImpl = performUpload,
+  checkBuildNumberImpl = checkBuildNumber,
 }) {
   let buildSuccess = false;
   let errorMessage;
@@ -514,6 +516,20 @@ export async function performBuild({
       code = await runInherit(projectRoot, 'flutter', ['pub', 'get']);
       if (code !== 0) {
         throw new Error(`flutter pub get failed with exit code ${code}`);
+      }
+    }
+
+    // Fail in seconds, not after the build, when BuildPort already holds this number.
+    if (resolveUploadProvider(config, platform) === 'buildport') {
+      const buildport = getBuildportSection(config);
+      if (buildport) {
+        const check = await checkBuildNumberImpl({
+          version: getVersion(projectRoot),
+          platform,
+          appGroup: buildport.app_group || getAppInfo(projectRoot, platform).app_group,
+          apiToken: buildport.api_token,
+        });
+        if (check.status === 'taken') throw new Error(check.message);
       }
     }
 

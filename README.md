@@ -105,6 +105,18 @@ tunai-build-script --generate-changelog --no-fetch-github-pr v1.0.0 HEAD
 
 Run **`tunai-build-script -help`** for the full option list.
 
+### Build number check
+
+When a build uploads to BuildPort, the tool first asks `GET /api/builds/check` whether
+this app, platform (iOS or Android), version and build number already exist. BuildPort
+refuses a different file with the same number at upload, so a taken number stops the
+build in seconds instead of after it finishes. The message lists the tracks holding the
+number and the way out (for Tunaipro, reserve a number with
+`python3 tool/tunaipro_build_number.py --repo . --reserve --adhoc`, then
+`--bump-version manual <version>+<number>`). The check only blocks on an answer: offline,
+an HTTP error, macOS, a missing token or a pubspec version without a build number all
+continue, with a warning where something failed. `--upload` (upload only) does not check.
+
 ### Release candidate (`--release-candidate ios`)
 
 Builds a final-testing IPA with the production runtime channel and production bundle identifier, signs it for ad-hoc installation, verifies the completed IPA, and uploads it to Buildport. It intentionally does not require a particular branch or approved SHA.
