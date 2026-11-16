@@ -106,7 +106,16 @@ function parseCumulativeChangelogConfig(config, releaseCandidate) {
     );
   }
 
+  // A destination is optional: without one the changelog is still written and
+  // committed, and nothing is sent to Telegram.
   const destination = cumulative.telegram;
+  if (destination === undefined) {
+    return {
+      fromTagPrefix,
+      outputPath: normalizedOutputPath,
+      telegram: null,
+    };
+  }
   if (
     !destination ||
     typeof destination !== 'object' ||

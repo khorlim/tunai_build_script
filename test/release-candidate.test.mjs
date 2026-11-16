@@ -197,6 +197,30 @@ test('release candidate validates a cumulative production changelog destination'
   });
 });
 
+test('cumulative changelog needs no Telegram destination', (t) => {
+  const projectRoot = makeTempProject();
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  const config = candidateConfig();
+  assert.equal(config.telegram, undefined);
+  config.release_candidate.cumulative_changelog = {
+    from_tag_prefix: 'example-prod',
+    path: 'changelog_tester_since_prod.md',
+  };
+
+  const result = prepareReleaseCandidate({
+    projectRoot,
+    config,
+    platform: 'ios',
+    writeFiles: false,
+  });
+
+  assert.deepEqual(result.cumulativeChangelog, {
+    fromTagPrefix: 'example-prod',
+    outputPath: 'changelog_tester_since_prod.md',
+    telegram: null,
+  });
+});
+
 test('cumulative changelog rejects unsafe paths', (t) => {
   const projectRoot = makeTempProject();
   t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));

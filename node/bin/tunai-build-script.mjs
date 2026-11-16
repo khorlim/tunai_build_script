@@ -645,7 +645,9 @@ async function main() {
         `Cumulative changelog: ${cumulativeChangelog.fromRev} .. HEAD -> ${cumulativeChangelog.outputPath}`,
       );
       console.log(
-        `Cumulative Telegram destination: chat ${cumulativeChangelog.telegram.chat_id}, topic ${cumulativeChangelog.telegram.topic_id}`,
+        cumulativeChangelog.telegram
+          ? `Cumulative Telegram destination: chat ${cumulativeChangelog.telegram.chat_id}, topic ${cumulativeChangelog.telegram.topic_id}`
+          : 'Cumulative Telegram destination: none (nothing is sent)',
       );
     }
 
@@ -666,7 +668,7 @@ async function main() {
       console.log(
         '  3. build IPA with production ad-hoc signing, validate its bundle/config, and upload to Buildport',
       );
-      if (cumulativeChangelog) {
+      if (cumulativeChangelog?.telegram) {
         console.log(
           '  4. send the cumulative changelog to its configured Telegram topic',
         );
@@ -674,7 +676,12 @@ async function main() {
       return;
     }
 
-    if (!args.telegramReceipt) {
+    // Receipts record Telegram message IDs, so they are only needed when
+    // something is sent to Telegram.
+    const sendsToTelegram =
+      Boolean(getTelegramSection(candidate.config)) ||
+      Boolean(cumulativeChangelog?.telegram);
+    if (sendsToTelegram && !args.telegramReceipt) {
       throw new Error(
         '--release-candidate requires --telegram-receipt so every Telegram delivery has durable message-ID evidence',
       );
