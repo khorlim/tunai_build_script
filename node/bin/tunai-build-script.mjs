@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { findProjectWithConfig, CONFIG_FILENAME } from '../lib/find-project.mjs';
 import {
   loadConfigFile,
+  withBuildportTrack,
   getBuildportSection,
   getPrepareReleaseSection,
   getTelegramSection,
@@ -49,6 +50,8 @@ Options:
   --upload                      Upload only (iOS/Android), no build
   --no-update                   Skip git pull, submodule update, flutter pub get (iOS/Android)
   --upload-changelog <path>     Relative path; overrides config upload.changelog_path
+  --track <name>                BuildPort track for this upload, overriding buildport.track (iOS/Android build,
+                                --upload and --release-candidate). A new name creates the track.
   --notes <text>                BuildPort release notes (Markdown) for this build
   --notes-file <path>           Read BuildPort release notes from a Markdown file (overrides --notes and
                                 buildport.notes_path)
@@ -150,6 +153,7 @@ function parseArgs(argv) {
     uploadOnly: false,
     noUpdate: false,
     uploadChangelog: null,
+    track: null,
     notesText: null,
     notesFile: null,
     buildportNotesToken: null,
@@ -268,6 +272,12 @@ function parseArgs(argv) {
       out.notesText = argv[++i];
       if (out.notesText === undefined) {
         console.error('Error: --notes requires text');
+        process.exit(1);
+      }
+    } else if (a === '--track') {
+      out.track = argv[++i];
+      if (!out.track || out.track.startsWith('-') || !out.track.trim()) {
+        console.error('Error: --track requires a BuildPort track name');
         process.exit(1);
       }
     } else if (a === '--notes-file') {
@@ -452,6 +462,12 @@ function resolveMacosAppDir(explicitProjectRoot) {
 }
 
 function validateNoMix(args, mode) {
+  if (args.track && mode !== 'release-candidate' && mode !== 'build') {
+    console.error(
+      'Error: --track applies only to iOS/Android build, --upload and --release-candidate',
+    );
+    process.exit(1);
+  }
   if (mode === 'release-candidate') {
     const conflicts = [
       ['testReleasePlatform', 'Error: choose --release-candidate or --test-release'],
@@ -602,7 +618,10 @@ async function main() {
     );
     console.log(`Using config: ${configPath}`);
 
-    const sourceConfig = loadConfigFile(configPath);
+    const sourceConfig = withBuildportTrack(
+      loadConfigFile(configPath),
+      args.track,
+    );
     const releaseConfig = getPrepareReleaseSection(sourceConfig);
     const candidate = prepareReleaseCandidate({
       projectRoot,
@@ -637,6 +656,9 @@ async function main() {
     console.log(`iOS export options: ${candidate.exportOptionsPath}`);
     console.log(`iOS archive signing: manual, ${candidate.archiveSigning.certificate}, ${candidate.archiveSigning.profile}`);
     console.log('Distribution: Buildport');
+    console.log(
+      `Buildport track: ${sourceConfig.buildport?.track ?? "Main (app default)"}`,
+    );
     console.log(
       `Buildport app group: ${candidate.buildportAppGroup ?? '(pubspec name)'}`,
     );
@@ -904,7 +926,7 @@ async function main() {
   console.log(`Using project root: ${projectRoot}`);
   console.log(`Using config: ${configPath}`);
 
-  const config = loadConfigFile(configPath);
+  const config = withBuildportTrack(loadConfigFile(configPath), args.track);
 
   const topicOverride =
     args.topicId || process.env.TELEGRAM_TOPIC_ID || undefined;

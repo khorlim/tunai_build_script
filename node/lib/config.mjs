@@ -91,6 +91,19 @@ export function getBuildportSection(config) {
   };
 }
 
+/**
+ * Returns the config with `buildport.track` replaced by a per-run track, or the
+ * config unchanged when no track is given. The track is named on the command
+ * line so one config can serve both the app's Main track and another track.
+ * @param {ReturnType<typeof loadConfigFile>} config
+ * @param {string | null | undefined} track
+ */
+export function withBuildportTrack(config, track) {
+  const name = typeof track === 'string' ? track.trim() : '';
+  if (!name) return config;
+  return { ...config, buildport: { ...(config.buildport ?? {}), track: name } };
+}
+
 /** @param {ReturnType<typeof loadConfigFile>} config */
 export function getTelegramSection(config) {
   const t = config?.telegram;

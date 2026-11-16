@@ -408,6 +408,59 @@ test('release-candidate dry-run needs no git branch or repository', (t) => {
   assert.equal(fs.existsSync(path.join(projectRoot, '.env')), false);
 });
 
+test('release-candidate --track overrides the Buildport track for one run', (t) => {
+  const projectRoot = makeTempProject();
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  const configPath = path.join(
+    projectRoot,
+    'tunai_build_script_config.json',
+  );
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(candidateConfig(), null, 2)}\n`,
+  );
+  const run = (...extra) =>
+    spawnSync(
+      process.execPath,
+      [
+        cliPath,
+        '--release-candidate',
+        'ios',
+        '--dry-run',
+        '--project-root',
+        projectRoot,
+        '--config',
+        configPath,
+        ...extra,
+      ],
+      { encoding: 'utf8' },
+    );
+
+  const withTrack = run('--track', 'RC');
+  assert.equal(withTrack.status, 0, withTrack.stderr);
+  assert.match(withTrack.stdout, /Buildport track: RC/);
+
+  const withoutTrack = run();
+  assert.equal(withoutTrack.status, 0, withoutTrack.stderr);
+  assert.match(withoutTrack.stdout, /Buildport track: Main \(app default\)/);
+});
+
+test('--track is rejected where no upload happens', () => {
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--bump-version', 'build', '--track', 'RC'],
+    { encoding: 'utf8' },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--track applies only to/);
+
+  const missing = spawnSync(process.execPath, [cliPath, '--track'], {
+    encoding: 'utf8',
+  });
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /--track requires a BuildPort track name/);
+});
+
 test('test-release dry-run validates test env without writing it', (t) => {
   const projectRoot = makeTempProject();
   t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
