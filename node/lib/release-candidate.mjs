@@ -243,43 +243,46 @@ export function prepareChannelEnvironment({
   };
 }
 
-export function prepareReleaseCandidate({
+/**
+ * Validate and render everything a channel needs for an iOS build: the channel
+ * identifiers, the export-options mapping, the archive signing overrides and the
+ * runtime environment. Shared by --release-candidate and --channel so both
+ * apply exactly the same channel. Writes nothing unless writeFiles is true, and
+ * then only the ignored channel files (the runtime env file and
+ * ios/Flutter/channel.xcconfig).
+ */
+export function prepareIosChannel({
   projectRoot,
   config,
-  platform,
+  channelName,
+  expectedTestVersion,
+  modeLabel,
+  writtenBy,
   writeFiles = true,
 }) {
-  if (platform !== 'ios') {
-    throw new Error(
-      '--release-candidate currently supports ios only',
-    );
-  }
-
-  const channel = config?.channel?.prod;
+  const fieldName = `channel.${channelName}`;
+  const channel = config?.channel?.[channelName];
   if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
-    throw new Error(
-      'channel.prod is required for --release-candidate',
-    );
+    throw new Error(`${fieldName} is required for ${modeLabel}`);
   }
 
   const iosBundleId = channel.ios_bundle_id?.trim();
   if (!iosBundleId) {
     throw new Error(
-      'channel.prod.ios_bundle_id is required for --release-candidate ios',
+      `${fieldName}.ios_bundle_id is required for ${modeLabel} ios`,
     );
   }
   const iosDisplayName = channel.ios_display_name?.trim();
   if (!iosDisplayName || /[\r\n]/.test(iosDisplayName)) {
     throw new Error(
-      'channel.prod.ios_display_name is required for --release-candidate ios',
+      `${fieldName}.ios_display_name is required for ${modeLabel} ios`,
     );
   }
 
-  const exportOptionsRel =
-    channel.ios_export_options_plist?.trim();
+  const exportOptionsRel = channel.ios_export_options_plist?.trim();
   if (!exportOptionsRel) {
     throw new Error(
-      'channel.prod.ios_export_options_plist is required for --release-candidate ios',
+      `${fieldName}.ios_export_options_plist is required for ${modeLabel} ios`,
     );
   }
   const exportOptionsPath = resolveProjectPath(projectRoot, exportOptionsRel);
@@ -289,13 +292,7 @@ export function prepareReleaseCandidate({
     );
   }
   const exportOptions = JSON.parse(
-    runCommand('plutil', [
-      '-convert',
-      'json',
-      '-o',
-      '-',
-      exportOptionsPath,
-    ]),
+    runCommand('plutil', ['-convert', 'json', '-o', '-', exportOptionsPath]),
   );
   if (
     exportOptions.method !== 'ad-hoc' &&
@@ -318,18 +315,11 @@ export function prepareReleaseCandidate({
     channel.ios_extension_targets ?? {},
   );
 
-  const buildport = getBuildportSection(config);
-  if (!buildport) {
-    throw new Error(
-      '--release-candidate requires buildport.api_token or BUILDPORT_API_TOKEN',
-    );
-  }
-
-  const { envPath, envContent } = prepareChannelEnvironment({
+  const { envPath, envContent, testVersion } = prepareChannelEnvironment({
     projectRoot,
     channel,
-    channelName: 'prod',
-    expectedTestVersion: false,
+    channelName,
+    expectedTestVersion,
     writeFile: false,
   });
 
@@ -339,6 +329,68 @@ export function prepareReleaseCandidate({
     'Flutter',
     'channel.xcconfig',
   );
+  if (writeFiles) {
+    fs.mkdirSync(path.dirname(channelFile), { recursive: true });
+    fs.writeFileSync(
+      channelFile,
+      `// Written by tunai-build-script (${writtenBy}). Do not commit.\n` +
+        `PRODUCT_BUNDLE_IDENTIFIER = ${iosBundleId}\n` +
+        `APP_DISPLAY_NAME = ${iosDisplayName}\n`,
+      'utf8',
+    );
+    fs.writeFileSync(envPath, envContent, 'utf8');
+  }
+
+  return {
+    iosBundleId,
+    iosDisplayName,
+    exportOptionsRel,
+    exportOptionsPath,
+    archiveSigning,
+    envPath,
+    channelFile,
+    testVersion,
+  };
+}
+
+export function prepareReleaseCandidate({
+  projectRoot,
+  config,
+  platform,
+  writeFiles = true,
+}) {
+  if (platform !== 'ios') {
+    throw new Error(
+      '--release-candidate currently supports ios only',
+    );
+  }
+
+  const {
+    iosBundleId,
+    iosDisplayName,
+    exportOptionsRel,
+    exportOptionsPath,
+    archiveSigning,
+    envPath,
+    channelFile,
+  } = prepareIosChannel({
+    projectRoot,
+    config,
+    channelName: 'prod',
+    expectedTestVersion: false,
+    modeLabel: '--release-candidate',
+    writtenBy: '--release-candidate',
+    // Files are written below, once the remaining validation has passed.
+    writeFiles: false,
+  });
+
+  const buildport = getBuildportSection(config);
+  if (!buildport) {
+    throw new Error(
+      '--release-candidate requires buildport.api_token or BUILDPORT_API_TOKEN',
+    );
+  }
+
   const releaseCandidate = config.release_candidate;
   if (
     releaseCandidate !== undefined &&
@@ -382,15 +434,14 @@ export function prepareReleaseCandidate({
   };
 
   if (writeFiles) {
-    fs.mkdirSync(path.dirname(channelFile), { recursive: true });
-    fs.writeFileSync(
-      channelFile,
-      `// Written by tunai-build-script (--release-candidate). Do not commit.\n` +
-        `PRODUCT_BUNDLE_IDENTIFIER = ${iosBundleId}\n` +
-        `APP_DISPLAY_NAME = ${iosDisplayName}\n`,
-      'utf8',
-    );
-    fs.writeFileSync(envPath, envContent, 'utf8');
+    prepareIosChannel({
+      projectRoot,
+      config,
+      channelName: 'prod',
+      expectedTestVersion: false,
+      modeLabel: '--release-candidate',
+      writtenBy: '--release-candidate',
+    });
   }
 
   return {
@@ -429,7 +480,9 @@ export function validateIosReleaseCandidateArtifact({
   ipaPath,
   expectedBundleId,
   expectedDisplayName,
+  expectedTestVersion = false,
 }) {
+  const expectedValue = String(expectedTestVersion);
   const listing = runCommand('unzip', ['-Z1', ipaPath]);
   const entries = String(listing).split(/\r?\n/).filter(Boolean);
   const infoPlistEntry = entries.find((entry) =>
@@ -479,9 +532,9 @@ export function validateIosReleaseCandidateArtifact({
   }
   const envContent = runCommand('unzip', ['-p', ipaPath, envEntry]);
   const testVersion = readDotEnvValue(envContent, 'TestVersion');
-  if (testVersion?.toLowerCase() !== 'false') {
+  if (testVersion?.toLowerCase() !== expectedValue) {
     throw new Error(
-      `Release-candidate IPA must contain TestVersion=false, got "${testVersion ?? 'missing'}"`,
+      `Release-candidate IPA must contain TestVersion=${expectedValue}, got "${testVersion ?? 'missing'}"`,
     );
   }
 
