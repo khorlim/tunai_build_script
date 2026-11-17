@@ -19,6 +19,7 @@ import { bumpVersion } from '../lib/bump.mjs';
 import { runMacosTestflightScript } from '../lib/macos-testflight.mjs';
 import { runPrepareRelease } from '../lib/prepare-release.mjs';
 import { getLastTagMatchingPrefix } from '../lib/changelog/changelog-git.mjs';
+import { runChannelBuild } from '../lib/channel-build.mjs';
 import {
   prepareChannelEnvironment,
   prepareReleaseCandidate,
@@ -47,6 +48,13 @@ Options:
   --tag-prefix <prefix>         With --prepare-release/--release-candidate: override the configured tag prefix
   --changelog-from <rev>        With --prepare-release: changelog start (default: prefix-matching tag or latest tag)
   --changelog-to <rev>          With --prepare-release: changelog end (default: HEAD)
+  --channel test|prod           With --platform ios: apply channel.test or channel.prod from the config (bundle id,
+                                display name, TestVersion env, channel.xcconfig, archive signing) and build + upload
+                                to BuildPort. Never bumps the version, writes changelogs, commits, tags, pushes or
+                                sends Telegram; only the ignored channel files are written (listed in the output).
+                                Works with --track, --notes, --notes-file, --no-update, --config, --project-root,
+                                --dry-run. Not for android/macos, --upload, --release-candidate, --test-release,
+                                --prepare-release or --bump-version.
   --upload                      Upload only (iOS/Android), no build
   --no-update                   Skip git pull, submodule update, flutter pub get (iOS/Android)
   --upload-changelog <path>     Relative path; overrides config upload.changelog_path
@@ -94,6 +102,7 @@ Changelog (must be the first argument; needs git on PATH):
 Examples:
   tunai-build-script
   tunai-build-script --platform ios --no-update
+  tunai-build-script --platform ios --channel test --no-update --track Branch --notes-file notes.md
   tunai-build-script --release-candidate ios --dry-run
   tunai-build-script --upload --platform android
   tunai-build-script --upload-changelog CHANGELOG.md
@@ -163,6 +172,7 @@ function parseArgs(argv) {
     testUploadFile: null,
     testReleasePlatform: null,
     releaseCandidatePlatform: null,
+    channel: null,
     dryRun: false,
   };
 
@@ -244,6 +254,13 @@ function parseArgs(argv) {
         process.exit(1);
       }
       out.releaseCandidatePlatform = pl;
+    } else if (a === '--channel') {
+      const c = argv[++i]?.toLowerCase();
+      if (c !== 'test' && c !== 'prod') {
+        console.error('Error: --channel requires test or prod');
+        process.exit(1);
+      }
+      out.channel = c;
     } else if (a === '--dry-run') {
       out.dryRun = true;
     } else if (a === '--tag-prefix') {
@@ -461,6 +478,32 @@ function resolveMacosAppDir(explicitProjectRoot) {
   process.exit(1);
 }
 
+function validateChannel(args) {
+  const fail = (msg) => {
+    console.error(`Error: ${msg}`);
+    process.exit(1);
+  };
+  if (args.releaseCandidatePlatform) fail('do not combine --channel with --release-candidate');
+  if (args.testReleasePlatform) fail('do not combine --channel with --test-release');
+  if (args.prepareReleaseType) fail('do not combine --channel with --prepare-release');
+  if (args.bumpType) fail('do not combine --channel with --bump-version');
+  if (args.platform === 'macos') fail('--channel is not supported with --platform macos');
+  if (args.platform === 'android') fail('--channel applies to --platform ios only');
+  if (args.platform !== 'ios') fail('--channel requires --platform ios');
+  if (args.uploadOnly) fail('do not use --upload with --channel (it applies to a build)');
+  if (args.buildportNotesToken) fail('do not combine --channel with --buildport-notes');
+  if (args.testTelegram || args.testUploadFile || args.telegramReceipt || args.topicId) {
+    fail('--channel sends nothing to Telegram; do not use Telegram flags with it');
+  }
+  if (args.uploadChangelog) fail('--channel writes no changelog; do not use --upload-changelog');
+  if (args.tagPrefix || args.changelogFrom || args.changelogTo) {
+    fail('--channel does not tag or write changelogs; do not use --tag-prefix/--changelog-from/--changelog-to');
+  }
+  if (args.macosBuildOnly || args.macosRepoUpdate) {
+    fail('--build-only and --repo-update require --platform macos');
+  }
+}
+
 function validateNoMix(args, mode) {
   if (args.track && mode !== 'release-candidate' && mode !== 'build') {
     console.error(
@@ -606,6 +649,7 @@ async function main() {
         ? 'macos'
         : 'build';
 
+  if (args.channel) validateChannel(args);
   validateNoMix(args, mode);
 
   if (mode === 'release-candidate') {
@@ -1003,6 +1047,19 @@ async function main() {
       `BuildPort notes ${notes ? 'updated' : 'cleared'} for ${updated?.app_name ?? 'build'} ${updated?.release_version ?? ''}`.trim(),
     );
     if (updated?.url) console.log(updated.url);
+    return;
+  }
+
+  if (args.channel) {
+    console.log('Using platform: ios');
+    await runChannelBuild({
+      projectRoot,
+      config,
+      channelName: args.channel,
+      update: !args.noUpdate,
+      notes: { text: args.notesText, file: args.notesFile },
+      dryRun: args.dryRun,
+    });
     return;
   }
 

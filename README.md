@@ -36,8 +36,8 @@ Copy `example/tunai_build_script_config.example.json` to your Flutter project ro
 | `upload.provider` | Legacy/default provider fallback: `"buildport"` (default), `"loadly"`, or `"telegram_apk"` |
 | `prepare_release` | Optional defaults for `--prepare-release`, including `tag_prefix` (`"release"` → `release-v1.0.1+11`, `""` → `v1.0.1+11`) |
 | `release_candidate` | Optional `tag_prefix` for `--release-candidate` (default: `release-candidate`). Optional `cumulative_changelog` generates a second tester changelog from the latest versioned production tag (including tags outside main ancestry after squash merges) and, when a Telegram destination is configured, sends that document to it |
-| `channel.test` | Required for `--test-release`: test identifiers plus `env_overrides.TestVersion: "true"`; optional `env_file` |
-| `channel.prod` | Required for `--release-candidate`: production `ios_bundle_id`, `ios_display_name`, `ios_export_options_plist`, and `env_overrides.TestVersion: "false"`; optional `env_file` |
+| `channel.test` | Required for `--test-release` and `--channel test`: test identifiers plus `env_overrides.TestVersion: "true"`; optional `env_file` |
+| `channel.prod` | Required for `--release-candidate` and `--channel prod`: production `ios_bundle_id`, `ios_display_name`, `ios_export_options_plist`, and `env_overrides.TestVersion: "false"`; optional `env_file` |
 | `buildport` | Required when the selected provider is `buildport`: `api_token` or env `BUILDPORT_API_TOKEN`. Optional: `app_group` (defaults to pubspec `name`), `track` (Buildport track for builds that need separate testing, for example `"WhatsApp"`; defaults to the app's Main track; `--track <name>` overrides it for one run, so one config can serve Main and another track), `timeout_seconds` (60–1800, default 600), `notes_path` (project-relative Markdown file sent as the build's release notes when no `--notes`/`--notes-file` is given). Version and title come from the pubspec and the platform display name |
 | `loadly` | Required when the selected provider is `loadly`: `api_key` from [Loadly API](https://loadly.io/doc/view/api). Optional: `build_update_description`, `build_password`, `build_install_type`, `build_channel_shortcut`, `timeout_seconds` (60–1800, default 600) |
 | `telegram` | Optional for notifications; required when provider is `telegram_apk`. `bot_token`, `chat_id`, optional `topic_id`. Use `${ENV_VAR}` in strings to pull secrets from the environment |
@@ -116,6 +116,16 @@ number and the way out (for Tunaipro, reserve a number with
 `--bump-version manual <version>+<number>`). The check only blocks on an answer: offline,
 an HTTP error, macOS, a missing token or a pubspec version without a build number all
 continue, with a warning where something failed. `--upload` (upload only) does not check.
+
+### Channel builds (`--platform ios --channel test|prod`)
+
+Builds and uploads an iOS IPA with a channel applied, and writes nothing to git. Plain `--platform ios` does not apply a channel; this flag does, using exactly the preparation `--release-candidate` (prod) and `--test-release` (test) use: bundle id, display name, `TestVersion` env override, the runtime env file, `ios/Flutter/channel.xcconfig`, manual archive signing (certificate and profile per target, including `ios_extension_targets`) derived from `channel.<name>.ios_export_options_plist`, and the same pre-build checks (export options must map the channel bundle id and every extension). `channel.test` or `channel.prod` must exist in the config; both need `ios_bundle_id`, `ios_display_name`, `ios_export_options_plist` and `env_overrides.TestVersion` (`"true"` for test, `"false"` for prod). The upload goes to BuildPort (`buildport.api_token` required; Telegram is never used) and the finished IPA is checked for the channel's bundle id, display name and `TestVersion`.
+
+```bash
+tunai-build-script --platform ios --channel test --no-update --config cfg.json --project-root app --track Branch --notes-file notes.md
+```
+
+It does not bump the version, write changelogs, commit, tag, push or send Telegram messages, and never writes tracked files. The only files it writes are the ignored channel files (the runtime env file and `ios/Flutter/channel.xcconfig`); it lists them and prints `Channel: <test|prod> bundle id <id>` and the usual `BuildPort build token:` lines. Without `--no-update` it still runs the normal `git pull`, submodule update and `flutter pub get` first, as plain builds do. `--dry-run` validates and prints without writing or building. Works with `--track`, `--notes`, `--notes-file`, `--no-update`, `--config`, `--project-root`; it is an error with other platforms, `--upload`, `--release-candidate`, `--test-release`, `--prepare-release`, `--bump-version`, and the Telegram, changelog and tag flags.
 
 ### Release candidate (`--release-candidate ios`)
 
