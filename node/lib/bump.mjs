@@ -41,7 +41,7 @@ function updateInfoPlist(content, versionName, buildNumber) {
   return updated;
 }
 
-function updateBuildGradle(content, versionName, buildNumber) {
+export function updateBuildGradle(content, versionName, buildNumber) {
   let c = content;
 
   const flutterName = c.match(
@@ -54,13 +54,12 @@ function updateBuildGradle(content, versionName, buildNumber) {
       `versionName${assign}"${versionName}"`,
     );
   } else {
-    const m = c.match(/versionName(\s*=?\s*)"[^"]+"/);
+    // Groovy allows 'single' or "double" quotes; keep the file's own style.
+    const literal = /versionName(\s*=?\s*)(["'])[^"']+\2/;
+    const m = c.match(literal);
     if (m) {
-      const assign = m[1];
-      c = c.replace(
-        /versionName\s*=?\s*"[^"]+"/,
-        `versionName${assign}"${versionName}"`,
-      );
+      const [, assign, quote] = m;
+      c = c.replace(literal, `versionName${assign}${quote}${versionName}${quote}`);
     }
   }
 
@@ -196,12 +195,14 @@ export async function bumpVersion({
   const gradleKts = path.join(projectRoot, 'android', 'app', 'build.gradle.kts');
   if (fs.existsSync(gradle)) {
     const g = fs.readFileSync(gradle, 'utf8');
-    fs.writeFileSync(gradle, updateBuildGradle(g, versionName, newBuildNumber));
-    console.log('✓ Updated build.gradle');
+    const updated = updateBuildGradle(g, versionName, newBuildNumber);
+    fs.writeFileSync(gradle, updated);
+    console.log(updated === g ? 'ℹ build.gradle has no literal versionName/versionCode (unchanged)' : '✓ Updated build.gradle');
   } else if (fs.existsSync(gradleKts)) {
     const g = fs.readFileSync(gradleKts, 'utf8');
-    fs.writeFileSync(gradleKts, updateBuildGradle(g, versionName, newBuildNumber));
-    console.log('✓ Updated build.gradle.kts');
+    const updated = updateBuildGradle(g, versionName, newBuildNumber);
+    fs.writeFileSync(gradleKts, updated);
+    console.log(updated === g ? 'ℹ build.gradle.kts has no literal versionName/versionCode (unchanged)' : '✓ Updated build.gradle.kts');
   } else {
     console.log('ℹ build.gradle/build.gradle.kts not found (skipping)');
   }
